@@ -61,6 +61,8 @@
 #include "lwip/sys.h"
 #include "lwip/pbuf.h"
 
+#include <string.h>
+
 #if LWIP_DEBUG_TIMERNAMES
 #define HANDLER(x) x, #x
 #else /* LWIP_DEBUG_TIMERNAMES */
@@ -77,6 +79,11 @@ static void tcpip_tcp_slow_timer(void);
 static void tcpip_tcp_fast_timer(void);
 static bool tcp_timer_calculate_next_wake(u32_t * next_wake_ms);
 void tcpip_tcp_poll_timer(void);
+#endif
+
+#if LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+static void ipv6_precise_timer(void *arg);
+static bool ipv6_precise_timer_calculate_next_wake(struct lwip_cyclic_timer *cyclic, u32_t *next_wake_ms);
 #endif
 
 /** This array contains all stack-internal cyclic timers. To get the number of
@@ -121,16 +128,16 @@ struct lwip_cyclic_timer lwip_cyclic_timers[] = {
 #endif /* LWIP_DNS */
 #if IPV6_TIMER_PRECISE_NEEDED
 #if LWIP_IPV6
-  {LWIP_TIMER_STATUS_IDLE, ND6_TMR_INTERVAL, HANDLER(nd6_tmr)},
+  {LWIP_TIMER_STATUS_RUNNING, ND6_TMR_INTERVAL, HANDLER(nd6_tmr)},
 #endif /* LWIP_IPV6 */
 #if LWIP_IPV6_REASS
-  {LWIP_TIMER_STATUS_IDLE, IP6_REASS_TMR_INTERVAL, HANDLER(ip6_reass_tmr)},
+  {LWIP_TIMER_STATUS_RUNNING, IP6_REASS_TMR_INTERVAL, HANDLER(ip6_reass_tmr)},
 #endif /* LWIP_IPV6_REASS */
 #if LWIP_IPV6_MLD
-  {LWIP_TIMER_STATUS_IDLE, MLD6_TMR_INTERVAL, HANDLER(mld6_tmr)},
+  {LWIP_TIMER_STATUS_RUNNING, MLD6_TMR_INTERVAL, HANDLER(mld6_tmr)},
 #endif /* LWIP_IPV6_MLD */
 #if LWIP_IPV6_DHCP6
-  {LWIP_TIMER_STATUS_IDLE, DHCP6_TIMER_MSECS, HANDLER(dhcp6_tmr)},
+  {LWIP_TIMER_STATUS_RUNNING, DHCP6_TIMER_MSECS, HANDLER(dhcp6_tmr)},
 #endif /* LWIP_IPV6_DHCP6 */
 #else
 #if LWIP_IPV6
@@ -154,7 +161,13 @@ const int lwip_num_cyclic_timers = LWIP_ARRAYSIZE(lwip_cyclic_timers);
 /** The one and only timeout list */
 static struct sys_timeo *next_timeout;
 
-#if TCP_TIMER_PRECISE_NEEDED
+#if TCP_TIMER_PRECISE_NEEDED || IPV6_TIMER_PRECISE_NEEDED
+#define LWIP_TIMEOUT_WAKEUP_NEEDED 1
+#else
+#define LWIP_TIMEOUT_WAKEUP_NEEDED 0
+#endif
+
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
 /**
  * bouffalo lp change
  * Trigger tcpip_thread fetch mbox, then wait new shorter timer
@@ -171,6 +184,258 @@ static u32_t cur_mbox_fetch_sleeptime;
 extern u32_t tcp_ticks;
 
 static u32_t current_timeout_due_time;
+
+static struct lwip_cyclic_timer *
+lwip_find_cyclic_timer(lwip_cyclic_timer_handler handler)
+{
+  size_t i;
+
+  for (i = 0; i < LWIP_ARRAYSIZE(lwip_cyclic_timers); i++) {
+    if (lwip_cyclic_timers[i].handler == handler) {
+      return &lwip_cyclic_timers[i];
+    }
+  }
+
+  return NULL;
+}
+
+#if LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+enum lwip_ipv6_precise_timer_diag_id {
+  LWIP_IPV6_PRECISE_TIMER_DIAG_ND6 = 0,
+#if LWIP_IPV6_REASS
+  LWIP_IPV6_PRECISE_TIMER_DIAG_IP6_REASS,
+#endif
+#if LWIP_IPV6_MLD
+  LWIP_IPV6_PRECISE_TIMER_DIAG_MLD6,
+#endif
+#if LWIP_IPV6_DHCP6
+  LWIP_IPV6_PRECISE_TIMER_DIAG_DHCP6,
+#endif
+  LWIP_IPV6_PRECISE_TIMER_DIAG_COUNT
+};
+
+struct lwip_ipv6_precise_timer_diag_state {
+  u32_t schedule_count;
+  u32_t fire_count;
+  u32_t last_scheduled_ms;
+  u32_t last_fired_ms;
+};
+
+static u8_t ipv6_precise_timer_trace_enabled;
+static struct lwip_ipv6_precise_timer_diag_state
+    ipv6_precise_timer_diag_states[LWIP_IPV6_PRECISE_TIMER_DIAG_COUNT];
+
+static int ipv6_precise_timer_diag_index_from_handler(lwip_cyclic_timer_handler handler);
+static const char *ipv6_precise_timer_name_from_handler(lwip_cyclic_timer_handler handler);
+static void ipv6_precise_timer_trace_log(const char *event, struct lwip_cyclic_timer *cyclic, u32_t sleep_ms);
+
+static bool
+ipv6_precise_timer_is_supported(const struct lwip_cyclic_timer *cyclic)
+{
+  lwip_cyclic_timer_handler h;
+
+  if (cyclic == NULL) {
+    return false;
+  }
+
+  h = cyclic->handler;
+  return (h == nd6_tmr)
+#if LWIP_IPV6_REASS
+      || (h == ip6_reass_tmr)
+#endif
+#if LWIP_IPV6_MLD
+      || (h == mld6_tmr)
+#endif
+#if LWIP_IPV6_DHCP6
+      || (h == dhcp6_tmr)
+#endif
+      ;
+}
+
+static bool
+ipv6_precise_timer_calculate_next_wake(struct lwip_cyclic_timer *cyclic, u32_t *next_wake_ms)
+{
+  lwip_cyclic_timer_handler h;
+
+  LWIP_ASSERT("ipv6 precise timer", (cyclic != NULL) && (next_wake_ms != NULL));
+
+  h = cyclic->handler;
+  if (h == nd6_tmr) {
+    *next_wake_ms = nd6_tmr_sleeptime();
+    return (*next_wake_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
+  }
+#if LWIP_IPV6_REASS
+  if (h == ip6_reass_tmr) {
+    *next_wake_ms = ip6_reass_tmr_sleeptime();
+    return (*next_wake_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
+  }
+#endif
+#if LWIP_IPV6_MLD
+  if (h == mld6_tmr) {
+    *next_wake_ms = mld6_tmr_sleeptime();
+    return (*next_wake_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
+  }
+#endif
+#if LWIP_IPV6_DHCP6
+  if (h == dhcp6_tmr) {
+    *next_wake_ms = dhcp6_tmr_sleeptime();
+    return (*next_wake_ms == SYS_TIMEOUTS_SLEEPTIME_INFINITE);
+  }
+#endif
+
+  return true;
+}
+
+static int
+ipv6_precise_timer_diag_index_from_handler(lwip_cyclic_timer_handler handler)
+{
+  int index = 0;
+
+  if (handler == nd6_tmr) {
+    return index;
+  }
+  index++;
+#if LWIP_IPV6_REASS
+  if (handler == ip6_reass_tmr) {
+    return index;
+  }
+  index++;
+#endif
+#if LWIP_IPV6_MLD
+  if (handler == mld6_tmr) {
+    return index;
+  }
+  index++;
+#endif
+#if LWIP_IPV6_DHCP6
+  if (handler == dhcp6_tmr) {
+    return index;
+  }
+#endif
+
+  return -1;
+}
+
+static const char *
+ipv6_precise_timer_name_from_handler(lwip_cyclic_timer_handler handler)
+{
+  if (handler == nd6_tmr) {
+    return "nd6";
+  }
+#if LWIP_IPV6_REASS
+  if (handler == ip6_reass_tmr) {
+    return "ip6_reass";
+  }
+#endif
+#if LWIP_IPV6_MLD
+  if (handler == mld6_tmr) {
+    return "mld6";
+  }
+#endif
+#if LWIP_IPV6_DHCP6
+  if (handler == dhcp6_tmr) {
+    return "dhcp6";
+  }
+#endif
+  return "unknown";
+}
+
+static void
+ipv6_precise_timer_trace_log(const char *event, struct lwip_cyclic_timer *cyclic, u32_t sleep_ms)
+{
+  if (!ipv6_precise_timer_trace_enabled) {
+    return;
+  }
+
+  LWIP_PLATFORM_DIAG(("[ipv6-pt] %s timer=%s sleep_ms=%"U32_F" status=%d armed_ms=%"U32_F"\n",
+      event, ipv6_precise_timer_name_from_handler(cyclic->handler), sleep_ms,
+      (int)cyclic->status, cyclic->precise_sleep_ms));
+}
+
+static void
+ipv6_precise_timer_fire(struct lwip_cyclic_timer *cyclic)
+{
+  int diag_index;
+  u32_t sleep_ms = cyclic->precise_sleep_ms;
+
+  if (sleep_ms == 0) {
+    sleep_ms = cyclic->interval_ms;
+  }
+
+  diag_index = ipv6_precise_timer_diag_index_from_handler(cyclic->handler);
+  if (diag_index >= 0) {
+    ipv6_precise_timer_diag_states[diag_index].fire_count++;
+    ipv6_precise_timer_diag_states[diag_index].last_fired_ms = sleep_ms;
+  }
+  ipv6_precise_timer_trace_log("fire", cyclic, sleep_ms);
+  cyclic->handler();
+}
+
+static void
+ipv6_precise_timer(void *arg)
+{
+  struct lwip_cyclic_timer *cyclic = (struct lwip_cyclic_timer *)arg;
+
+  if ((cyclic == NULL) || (cyclic->status != LWIP_TIMER_STATUS_RUNNING)) {
+    return;
+  }
+
+  ipv6_precise_timer_fire(cyclic);
+  if (cyclic->status == LWIP_TIMER_STATUS_RUNNING) {
+    ipv6_timer_needed(cyclic->handler);
+  }
+}
+
+void
+ipv6_precise_timer_trace_set(u8_t enable)
+{
+  LWIP_ASSERT_CORE_LOCKED();
+  ipv6_precise_timer_trace_enabled = enable ? 1 : 0;
+}
+
+void
+ipv6_precise_timer_trace_reset(void)
+{
+  LWIP_ASSERT_CORE_LOCKED();
+  memset(ipv6_precise_timer_diag_states, 0, sizeof(ipv6_precise_timer_diag_states));
+}
+
+int
+ipv6_precise_timer_collect_diag(lwip_ipv6_precise_timer_diag_t *diags, int max_diags)
+{
+  int count = 0;
+  size_t i;
+
+  LWIP_ASSERT_CORE_LOCKED();
+
+  for (i = 0; i < LWIP_ARRAYSIZE(lwip_cyclic_timers); i++) {
+    struct lwip_cyclic_timer *cyclic = &lwip_cyclic_timers[i];
+    int diag_index;
+    u32_t next_sleep_ms;
+    bool stop_timer;
+
+    if (!ipv6_precise_timer_is_supported(cyclic)) {
+      continue;
+    }
+
+    diag_index = ipv6_precise_timer_diag_index_from_handler(cyclic->handler);
+    stop_timer = ipv6_precise_timer_calculate_next_wake(cyclic, &next_sleep_ms);
+    if ((diags != NULL) && (count < max_diags) && (diag_index >= 0)) {
+      diags[count].name = ipv6_precise_timer_name_from_handler(cyclic->handler);
+      diags[count].status = cyclic->status;
+      diags[count].armed_sleep_ms = cyclic->precise_sleep_ms;
+      diags[count].next_sleep_ms = stop_timer ? SYS_TIMEOUTS_SLEEPTIME_INFINITE : next_sleep_ms;
+      diags[count].schedule_count = ipv6_precise_timer_diag_states[diag_index].schedule_count;
+      diags[count].fire_count = ipv6_precise_timer_diag_states[diag_index].fire_count;
+      diags[count].last_scheduled_ms = ipv6_precise_timer_diag_states[diag_index].last_scheduled_ms;
+      diags[count].last_fired_ms = ipv6_precise_timer_diag_states[diag_index].last_fired_ms;
+    }
+    count++;
+  }
+
+  return count;
+}
+#endif
 
 #if LWIP_TESTMODE
 struct sys_timeo**
@@ -463,13 +728,21 @@ void sys_timeouts_init(void)
      * Add to support enable/disable timer dynamically
      */
     if (LWIP_TIMER_STATUS_RUNNING == lwip_cyclic_timers[i].status) {
-      sys_timeout(lwip_cyclic_timers[i].interval_ms, lwip_cyclic_timer, LWIP_CONST_CAST(void*, &lwip_cyclic_timers[i]));
+#if LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+      if (ipv6_precise_timer_is_supported(&lwip_cyclic_timers[i])) {
+        ipv6_timer_needed(lwip_cyclic_timers[i].handler);
+      } else
+#endif
+      {
+        sys_timeout(lwip_cyclic_timers[i].interval_ms, lwip_cyclic_timer,
+            LWIP_CONST_CAST(void*, &lwip_cyclic_timers[i]));
+      }
     }
     /** bouffalo lp change end */
   }
 }
 
-#if TCP_TIMER_PRECISE_NEEDED
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
 /**
  * bouffalo lp change
  * Trigger tcpip_thread fetch mbox, then wait new shorter timer
@@ -510,7 +783,7 @@ sys_timeout(u32_t msecs, sys_timeout_handler handler, void *arg)
 #else
   sys_timeout_abs(next_timeout_time, handler, arg);
 #endif
-#if TCP_TIMER_PRECISE_NEEDED
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
   /**
    * bouffalo lp change
    * Trigger tcpip_thread fetch mbox, then wait new shorter timer
@@ -527,26 +800,75 @@ sys_timeout(u32_t msecs, sys_timeout_handler handler, void *arg)
  */
 void sys_timeouts_set_timer_enable(bool enable, lwip_cyclic_timer_handler handler)
 {
-   size_t i;
+  struct lwip_cyclic_timer *cyclic = lwip_find_cyclic_timer(handler);
 
-  for (i = (LWIP_TCP ? 1 : 0); i < LWIP_ARRAYSIZE(lwip_cyclic_timers); i++) {
-    if (lwip_cyclic_timers[i].handler == handler) {
-      if (LWIP_TIMER_STATUS_RUNNING == lwip_cyclic_timers[i].status && !enable)
-      {
-        lwip_cyclic_timers[i].status = LWIP_TIMER_STATUS_STOPPING;
-      }
-      else if (enable)
-      {
-        if (LWIP_TIMER_STATUS_IDLE == lwip_cyclic_timers[i].status)
-        {
-          sys_timeout(lwip_cyclic_timers[i].interval_ms, lwip_cyclic_timer,
-              LWIP_CONST_CAST(void*, &lwip_cyclic_timers[i]));
-        }
-        lwip_cyclic_timers[i].status = LWIP_TIMER_STATUS_RUNNING;
-      }
-      break;
-    }
+  LWIP_ASSERT_CORE_LOCKED();
+
+  if (cyclic == NULL) {
+    return;
   }
+
+#if LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+  if (ipv6_precise_timer_is_supported(cyclic)) {
+    if (!enable) {
+      cyclic->status = LWIP_TIMER_STATUS_IDLE;
+      cyclic->precise_sleep_ms = 0;
+      sys_untimeout(ipv6_precise_timer, cyclic);
+    } else {
+      cyclic->status = LWIP_TIMER_STATUS_RUNNING;
+      ipv6_timer_needed(cyclic->handler);
+    }
+    return;
+  }
+#endif
+
+  if (LWIP_TIMER_STATUS_RUNNING == cyclic->status && !enable) {
+    cyclic->status = LWIP_TIMER_STATUS_STOPPING;
+  } else if (enable) {
+    if (LWIP_TIMER_STATUS_IDLE == cyclic->status) {
+      sys_timeout(cyclic->interval_ms, lwip_cyclic_timer, LWIP_CONST_CAST(void*, cyclic));
+    }
+    cyclic->status = LWIP_TIMER_STATUS_RUNNING;
+  }
+}
+
+void
+ipv6_timer_needed(lwip_cyclic_timer_handler handler)
+{
+#if LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+  struct lwip_cyclic_timer *cyclic = lwip_find_cyclic_timer(handler);
+  u32_t sleep_duration;
+  int diag_index;
+
+  LWIP_ASSERT_CORE_LOCKED();
+
+  if ((cyclic == NULL) || !ipv6_precise_timer_is_supported(cyclic)) {
+    return;
+  }
+
+  sys_untimeout(ipv6_precise_timer, cyclic);
+  cyclic->precise_sleep_ms = 0;
+
+  if (cyclic->status != LWIP_TIMER_STATUS_RUNNING) {
+    return;
+  }
+
+  if (ipv6_precise_timer_calculate_next_wake(cyclic, &sleep_duration)) {
+    return;
+  }
+
+  LWIP_ASSERT("ipv6 precise timeout", sleep_duration > 0);
+  diag_index = ipv6_precise_timer_diag_index_from_handler(cyclic->handler);
+  if (diag_index >= 0) {
+    ipv6_precise_timer_diag_states[diag_index].schedule_count++;
+    ipv6_precise_timer_diag_states[diag_index].last_scheduled_ms = sleep_duration;
+  }
+  cyclic->precise_sleep_ms = sleep_duration;
+  ipv6_precise_timer_trace_log("schedule", cyclic, sleep_duration);
+  sys_timeout(sleep_duration, ipv6_precise_timer, cyclic);
+#else
+  LWIP_UNUSED_ARG(handler);
+#endif
 }
 /** bouffalo lp change */
 
@@ -675,20 +997,20 @@ sys_timeouts_sleeptime(void)
   LWIP_ASSERT_CORE_LOCKED();
 
   if (next_timeout == NULL) {
-#if TCP_TIMER_PRECISE_NEEDED
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
     cur_mbox_fetch_sleeptime = SYS_TIMEOUTS_SLEEPTIME_INFINITE;
 #endif
     return SYS_TIMEOUTS_SLEEPTIME_INFINITE;
   }
   now = sys_now();
   if (TIME_LESS_THAN(next_timeout->time, now)) {
-#if TCP_TIMER_PRECISE_NEEDED
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
     cur_mbox_fetch_sleeptime = 0;
 #endif
     return 0;
   } else {
     u32_t ret = (u32_t)(next_timeout->time - now);
-#if TCP_TIMER_PRECISE_NEEDED
+#if LWIP_TIMEOUT_WAKEUP_NEEDED
     /**
      * bouffalo lp change
      * Trigger tcpip_thread fetch mbox, then wait new shorter timer
@@ -699,29 +1021,6 @@ sys_timeouts_sleeptime(void)
     return ret;
   }
 }
-
-#if LWIP_IPV6
-void ipv6_timer_switch(u8_t enable)                                
-{
-  for (size_t i = 0; i < LWIP_ARRAYSIZE(lwip_cyclic_timers); i++) {
-    lwip_cyclic_timer_handler h = lwip_cyclic_timers[i].handler;
-
-    if (   h == nd6_tmr
-#if LWIP_IPV6_REASS
-        || h == ip6_reass_tmr
-#endif
-#if LWIP_IPV6_MLD
-        || h == mld6_tmr
-#endif
-#if LWIP_IPV6_DHCP6
-        || h == dhcp6_tmr
-#endif
-       ) {
-        sys_timeouts_set_timer_enable(enable, h);
-    }
-  }
-}
-#endif
 
 #if TCP_TIMER_PRECISE_NEEDED
 /**

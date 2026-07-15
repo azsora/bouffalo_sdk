@@ -370,6 +370,8 @@ static void wifi_inject_frame_test_cmd(int argc, char **argv)
         0xDE, 0xAD, 0xBE, 0xEF
     };
 
+    memset(&params, 0, sizeof(params));
+
     /* Set up injection parameters */
     params.frame = test_frame;
     params.len = sizeof(test_frame);
@@ -517,3 +519,7 @@ static void udp_send_cmd(int argc, char **argv)
 
 SHELL_CMD_EXPORT_ALIAS(udp_echo_server_cmd, udp_echo_server, start UDP echo server for AP forward test.);
 SHELL_CMD_EXPORT_ALIAS(udp_send_cmd, udp_send, send UDP msg and wait for echo reply.);
+
+#if defined(CONFIG_BL_SUPPLICANT_P2P)
+#include "p2p_cli.c"
+#endif

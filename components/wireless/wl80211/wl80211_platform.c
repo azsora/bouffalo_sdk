@@ -193,6 +193,12 @@ void rtos_timeouts_start(unsigned int delay)
 }
 
 #ifdef COMPAT_WIFI_MGMR
+#if defined(CONFIG_WL80211_P2P)
+#define WL80211_EVT_TASK_STACK_DEPTH 1536
+#else
+#define WL80211_EVT_TASK_STACK_DEPTH 256
+#endif
+
 static void evt_handler_wrapper(void (*handler)(void))
 {
     assert(handler != NULL);
@@ -207,7 +213,7 @@ void rtos_start_evt_task(void (*handler)(void))
         return;
     }
 
-    xTaskCreate((void *)evt_handler_wrapper, "evt", 256, handler, 20, NULL);
+    xTaskCreate((void *)evt_handler_wrapper, "evt", WL80211_EVT_TASK_STACK_DEPTH, handler, 20, NULL);
 }
 #endif
 

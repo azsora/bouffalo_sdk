@@ -36,7 +36,7 @@ static int __attribute__((unused)) at_setup_cmd_userram(int argc, const char **a
 
 static const at_cmd_struct at_user_cmd[] = {
     //{"+USERRAM", NULL, at_query_cmd_userram, at_setup_cmd_userram, NULL, 0, 0},
-    {NULL,              NULL, NULL, NULL, 0, 0},
+    {NULL, NULL, NULL, NULL, 0, 0},
 };
 
 bool at_user_cmd_regist(void)

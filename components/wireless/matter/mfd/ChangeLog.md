@@ -1,5 +1,12 @@
 # change log on Matter MFD module
 
+## 2026/6/29
+- Version: 1.6.4
+- Changes
+  - Refined `mfd_copyDataItem` return values: -2 for element not found (mValuePtr is NULL), 0 for zero-length data, -1 for buffer too small or NULL pBuf argument.
+  - Added `static` qualifier to `g_mfd_var` global variable.
+  - Added NULL pointer validation for `pBuf` parameter in `mfd_copyDataItem`.
+
 ## 2026/6/8
 - Version: 1.6.3
 - Changes

@@ -51,8 +51,9 @@ typedef struct {
     char *sni;
 } ssl_conn_param_t;
 
-void *mbedtls_ssl_accept(int fd, const char *ca_cert, int ca_cert_len, 
-					 const char *srv_cert, int srv_cert_len, const char *private_cert, int private_cert_len);
+void *mbedtls_ssl_accept(int fd, const char *ca_cert, int ca_cert_len,
+                         const char *srv_cert, int srv_cert_len, const char *private_cert, int private_cert_len,
+                         const char *ssl_psk, int ssl_psk_len, const char *ssl_pskhint, int ssl_pskhint_len);
 void *mbedtls_ssl_connect(int fd, const ssl_conn_param_t *param);
 int mbedtls_ssl_send(void *ssl, const char *buffer, int length);
 
@@ -60,9 +61,12 @@ int mbedtls_ssl_recv(void *ssl, char *buffer, int length);
 
 int mbedtls_ssl_close(void *ssl);
 
+int mbedtls_ssl_verify_credential(const char *data, int len);
+
+int mbedtls_ssl_verify_cert_key_match(const char *cert_data, int cert_len, const char *key_data, int key_len);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif/* AT_NET_SSL_H */
-

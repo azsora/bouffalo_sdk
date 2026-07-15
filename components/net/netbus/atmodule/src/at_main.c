@@ -219,6 +219,8 @@ static void at_main_task(void *pvParameters)
     int len = 0;
     at_work_mode cmd_mode = at->incmd;
     int recv_size = 0;
+    uint8_t *buf = NULL;
+    void *pirv;
 
     at->device_ops.write_data((uint8_t *)AT_CMD_MSG_WEL, strlen(AT_CMD_MSG_WEL));
     while(!at->exit) {
@@ -250,10 +252,19 @@ static void at_main_task(void *pvParameters)
                 continue;
             }
 
-            ret = at->device_ops.read_data((uint8_t *)(at->inbuf), recv_size);
+            if (at->device_ops.read_zero_copy) {
+                ret = at->device_ops.read_zero_copy(&pirv, &buf);
+            } else {
+                ret = at->device_ops.read_data((uint8_t *)(at->inbuf), recv_size);
+                buf = (uint8_t *)at->inbuf;
+            }
             if (ret > 0) {
-                ret = at_through_input((uint8_t *)at->inbuf, ret);
+                ret = at_through_input((uint8_t *)buf, ret);
                 len = 0;
+                if (at->device_ops.read_buffer_release) {
+                    at->device_ops.read_buffer_release(pirv, buf, ret);
+                    buf = NULL;
+                }
 
                 if (ret == -1) {
                 	printf("at_through_input fail, exit throughput mode %d\r\n", ret);
@@ -276,7 +287,7 @@ static void at_main_task(void *pvParameters)
 int at_module_init(void)
 {
     int ret = -1;
-
+    const at_device_ops *devops;
     static __attribute__((section(".wifi_ram."))) uint8_t at_through_buffer[(AT_THROUGH_MAX_LEN > AT_CMD_MAX_LEN) ? AT_THROUGH_MAX_LEN : AT_CMD_MAX_LEN];
 
     if (at) {
@@ -290,16 +301,19 @@ int at_module_init(void)
     }
 
     memset((void *)at, 0, sizeof(struct at_struct));
+    devops = at_devops_get();
+    if (!devops) {
+        at_free(at);
+        at = NULL;
+        return -1;
+    }
     at->initialized = 0;
     at->echo = 0;
     at->syslog = 0;
     at->store = 1;
     at->exit = 0;
     at->incmd = AT_WORK_MODE_CMD;
-    at->device_ops.init_device = at_port_init;
-    at->device_ops.deinit_device = at_port_deinit;
-    at->device_ops.read_data = at_port_read_data;
-    at->device_ops.write_data = at_port_write_data;
+    at->device_ops = *devops;
     at->inbuf = (char *)at_through_buffer;
 
     ret = at->device_ops.init_device();
@@ -307,18 +321,18 @@ int at_module_init(void)
         AT_CMD_PRINTF("ERROR: init at cmd device failed, ret = %d\r\n", ret);
         goto INIT_ERROR;
     }
-#ifdef CONFIG_ATMODULE_NETWORK
-    /* register network AT command */
-    at_net_cmd_regist();
-#endif
-
 #ifdef CONFIG_ATMODULE_FS
     /* register at fs */
     at_fs_register();
 #endif
 
+#ifdef CONFIG_ATMODULE_NETWORK
+    /* register network AT command */
+    at_net_cmd_regist();
+#endif
     /* register base AT command */
     at_base_cmd_regist();
+
     at->syslog = at_base_config->sysmsg_cfg.syslog;
 
     /* register user AT command */
@@ -333,7 +347,7 @@ int at_module_init(void)
     /* register http AT command */
     at_http_cmd_regist();
 #endif
-#ifdef CONFIG_ATMODULE_BLUETOOTH
+#if defined(CONFIG_BLUETOOTH_APP) || defined(CONFIG_ATMODULE_BLUETOOTH)
     /* register ble AT command */
     at_ble_cmd_regist();
 #endif
@@ -421,4 +435,3 @@ int at_output_is_redirect()
     }
     return 0;
 }
-

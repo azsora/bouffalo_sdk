@@ -36,6 +36,7 @@
 
 #ifdef CFG_IPV6
 #include <lwip/ethip6.h>
+#include "lwip/nd6.h"
 #endif
 
 #include "os.h"
@@ -386,10 +387,25 @@ int net_if_get_name(net_al_if_t net_if, char *buf, int len)
     return 3;
 }
 
+#if defined(CFG_IPV6) && LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+static void net_if_set_up_or_restart_ipv6(struct netif *netif)
+{
+    if (netif_is_up(netif)) {
+        nd6_restart_netif(netif);
+    } else {
+        netif_set_up(netif);
+    }
+}
+#endif
+
 void net_if_up_cb(net_al_if_t net_if)
 {
     inet_if_t *nif = (inet_if_t *)net_if;
+#if defined(CFG_IPV6) && LWIP_IPV6 && IPV6_TIMER_PRECISE_NEEDED
+    netifapi_netif_common(nif, net_if_set_up_or_restart_ipv6, NULL);
+#else
     netifapi_netif_set_up(nif);
+#endif
 }
 
 void net_if_down_cb(net_al_if_t net_if)

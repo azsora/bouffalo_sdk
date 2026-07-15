@@ -10,6 +10,7 @@
 __BEGIN_DECLS__
 
 #define MIXER_READ_EVENT            (0x01)
+#define MIXER_DRAIN_EVENT           (0x02)
 
 typedef struct mixer_struct         mixer_t;
 

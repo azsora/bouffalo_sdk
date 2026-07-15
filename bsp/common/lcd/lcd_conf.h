@@ -37,6 +37,7 @@
     LCD_DSI_VIDIO_ILI9881C
     LCD_DSI_ILI9881C_KD050020  (ILI9881C 720x1280, RGB565, 4-lane, e.g. KD050HDFIA020, BL618DG)
     LCD_DSI_ILI9881C_KD050023W4  (ILI9881C 720x1280, RGB565, 2-lane, e.g. KD050HDFIA023-W4, BL618DG)
+    LCD_DSI_ILI9806E_KD050FWFIA019  (ILI9806E 480x854, RGB565, 2-lane, e.g. KD050FWFIA019, BL618DG)
     LCD_DSI_ST7102_YH494          (ST7102 480x960, RGB565, 2-lane, e.g. YH-494BSAC002N1, BL618DG)
     LCD_DSI_AXS15231B_HS035        (AXS15231B 172x640, RGB565 link, ARGB8888 OSD, 1-lane, firmware-init, BL618DG)
 
@@ -921,6 +922,16 @@
     */
    #define ST7796_SPI_DIR_MIRROR 0
 
+
+/* dsi ili9806e kd050fwfia019 config */
+#elif defined LCD_DSI_ILI9806E_KD050FWFIA019
+
+    /* MADCTL (0x36) orientation, applied on page 0 after the panel init table
+        0: panel default orientation
+        1: 180-degree rotation/mirror
+    */
+    #define ILI9806E_KD050FWFIA019_ROTATE_180 0
+
 #endif
 
 /********** PEC simulation DPI configuration **********/
@@ -1072,11 +1083,6 @@
         4: Yellow
     */
     #define LCD_DPI_V2_TEST_PATTERN     0
-
-    /* Enable OSD layer switch for screen buffer updates
-        When enabled, OSD layer is used for displaying LVGL content on top
-        of the base layer (which can show MJDEC YUV output) */
-    #define LCD_DPI_V2_USE_OSD_LAYER_SWITCH 0
 
 
 #endif

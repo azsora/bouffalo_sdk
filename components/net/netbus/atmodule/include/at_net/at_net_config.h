@@ -18,8 +18,11 @@ extern "C" {
 #define AT_CONFIG_KEY_NET_RECONN_INTV "NETRECONNINTV"
 #define AT_CONFIG_KEY_NET_TRANS_LINK "NETTRANSLINK"
 #define AT_CONFIG_KEY_NET_SSLCONF "NETSSLCONF"
+#define AT_CONFIG_KEY_NET_SSLSCONF "NETSSLSCONF"
 #define AT_CONFIG_KEY_NET_IPV6_ENABLE "IPV6"
 #define AT_CONFIG_KEY_NET_DNS "DNS"
+#define AT_CONFIG_KEY_NET_SNI "SSL_SNI"
+#define AT_CONFIG_KEY_NET_RECVMODE "RECVMODE"
 
 
 #define AT_CONFIG_DEFAULT_DNS1 "208.67.222.222" 
@@ -78,6 +81,10 @@ typedef struct {
     uint16_t remote_port;
     uint16_t keep_alive;
     uint16_t local_port;
+
+#define AT_NET_SAVETRANSLINK_RETRY_DEFAULT (10)
+#define AT_NET_SAVETRANSLINK_RETRY_MAX     (255)
+    uint8_t  retry_cnt;
 } net_trans_link;
 
 typedef struct {
@@ -107,6 +114,7 @@ typedef struct {
     uint8_t wips_enable;
     uint8_t ipv6_enable;
     net_ssl_conf_t sslconf[AT_NET_CLIENT_HANDLE_MAX];
+    net_ssl_conf_t sslsconf[AT_NET_SERVER_HANDLE_MAX];
     struct {
         ip_addr_t dns[DNS_MAX_SERVERS];
         uint8_t dns_isset;

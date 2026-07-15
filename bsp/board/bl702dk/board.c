@@ -279,7 +279,9 @@ void board_init(void)
     board_psram_init();
 #endif
 
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
     if (ret != 0) {
         printf("flash init fail!!!\r\n");
     }

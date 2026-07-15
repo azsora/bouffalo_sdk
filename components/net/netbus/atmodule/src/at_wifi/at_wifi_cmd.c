@@ -40,6 +40,7 @@ extern uint32_t rtos_now(bool isr);
 
 #include "at_net_main.h"
 #include "at_config.h"
+#include "at_utils_crypto.h"
 
 #ifndef CONFIG_WL80211
 #include "rtos_al.h"
@@ -232,7 +233,7 @@ static int at_setup_cmd_cwjap(int argc, const char **argv)
     int listen_interval_valid = 0, listen_interval = 3;
     int scan_mode_valid = 0, scan_mode = 1;
     int jap_timeout_valid = 0, jap_timeout = 15;
-    int pmf_valid = 0, pmf = 0;
+    int pmf_valid = 0, pmf = 1;
 
     AT_CMD_PARSE_STRING(0, ssid, sizeof(ssid));
     AT_CMD_PARSE_STRING(1, password, sizeof(password));
@@ -263,7 +264,7 @@ static int at_setup_cmd_cwjap(int argc, const char **argv)
         AT_WIFI_CMD_PRINTF("err jap_timeout_valid\r\n");
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
     }
-    if (pmf_valid && (pmf < 0 || pmf > 3)) {
+    if (pmf_valid && (pmf < 0 || pmf > 2)) {
         AT_WIFI_CMD_PRINTF("err pmf_valid \r\n");
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
     }
@@ -273,8 +274,21 @@ static int at_setup_cmd_cwjap(int argc, const char **argv)
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_OP_ERROR);
     }
 
+    memset(&at_wifi_config->sta_info, 0, sizeof(at_wifi_config->sta_info));
     strlcpy(at_wifi_config->sta_info.ssid, ssid, sizeof(at_wifi_config->sta_info.ssid));
-    strlcpy(at_wifi_config->sta_info.psk, password, sizeof(at_wifi_config->sta_info.psk));
+    if (strlen(password) > 0) {
+        int free_slot;
+        if (find_credential_slot(ssid, &free_slot) == -1 && free_slot == -1) {
+            memset(password, 0, sizeof(password));
+            return AT_RESULT_WITH_SUB_CODE(AT_SUB_NO_MEMORY);
+        }
+        at_utils_crypto_get_random_iv(at_wifi_config->sta_info.iv);
+        at_utils_crypto_aes_cbc_encrypt(at_wifi_config->sta_info.iv,
+                                        64,
+                                        (const uint8_t *)password,
+                                        at_wifi_config->sta_info.pwd_encrypted);
+    }
+    memset(password, 0, sizeof(password));
     if (bssid_valid) {
         memcpy(at_wifi_config->sta_info.bssid, bssid, sizeof(at_wifi_config->sta_info.bssid));
     } else {
@@ -285,7 +299,6 @@ static int at_setup_cmd_cwjap(int argc, const char **argv)
     at_wifi_config->sta_info.scan_mode = scan_mode;
     at_wifi_config->sta_info.jap_timeout = jap_timeout;
     at_wifi_config->sta_info.pmf = pmf;
-    //wifi_mgmr_psk_cal(password, ssid, strlen(ssid), at_wifi_config->sta_info.pmk);
     at_wifi_config->sta_info.freq = 0;
     at_wifi_config->sta_info.store = 0;
 
@@ -766,7 +779,7 @@ static int at_query_cmd_cwsap(int argc, const char **argv)
 
     at_response_string("+CWSAP:\"%s\",\"%s\",%d,%d,%d,%d\r\n",
             at_wifi_config->ap_info.ssid,
-            at_wifi_config->ap_info.pwd,
+            "********",
             at_wifi_config->ap_info.channel,
             at_wifi_config->ap_info.ecn,
             at_wifi_config->ap_info.max_conn,
@@ -809,9 +822,18 @@ static int at_setup_cmd_cwsap(int argc, const char **argv)
     strlcpy(at_wifi_config->ap_info.ssid, ssid, sizeof(at_wifi_config->ap_info.ssid));
     if (ecn == AT_WIFI_ENC_OPEN) {
         memset(at_wifi_config->ap_info.pwd, 0, sizeof(at_wifi_config->ap_info.pwd));
+        memset(&at_wifi_config->ap_credential_cache, 0, sizeof(wifi_secure_credential_t));
     } else {
-        strlcpy(at_wifi_config->ap_info.pwd, pwd, sizeof(at_wifi_config->ap_info.pwd));
+        at_utils_crypto_get_random_iv(at_wifi_config->ap_credential_cache.iv);
+        at_utils_crypto_aes_cbc_encrypt(at_wifi_config->ap_credential_cache.iv,
+                                        64,
+                                        (const uint8_t *)pwd,
+                                        at_wifi_config->ap_credential_cache.pwd_encrypted);
+        memcpy(at_wifi_config->ap_info.pwd_encrypted,
+               at_wifi_config->ap_credential_cache.pwd_encrypted,
+               sizeof(at_wifi_config->ap_info.pwd_encrypted));
     }
+    memset(pwd, 0, sizeof(pwd));
     at_wifi_config->ap_info.channel = channel;
     at_wifi_config->ap_info.ecn = ecn;
 
@@ -823,6 +845,7 @@ static int at_setup_cmd_cwsap(int argc, const char **argv)
     }
     if (at->store) {
         at_wifi_config_save(AT_CONFIG_KEY_WIFI_AP_INFO);
+        at_wifi_config_save(AT_CONFIG_KEY_WIFI_AP_SEC_CRED);
     }
 
     if (at_wifi_ap_start() != 0) {
@@ -1612,6 +1635,104 @@ static int at_query_cmd_cwevt(int argc, const char **argv)
     at_response_string("+CWEVT:%d\r\n", at_wifi_config->wevt_enable);
     return AT_RESULT_CODE_OK;
 }
+
+static int at_setup_cmd_cwcredadd(int argc, const char **argv)
+{
+    char ssid[33];
+    char pwd[65];
+    int slot;
+
+    AT_CMD_PARSE_STRING(0, ssid, sizeof(ssid));
+    AT_CMD_PARSE_STRING(1, pwd, sizeof(pwd));
+
+    if (strlen(ssid) == 0 || strlen(ssid) > 32) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+    if (strlen(pwd) < 8 || strlen(pwd) > 64) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+
+    slot = save_credential_to_cache(ssid, pwd);
+    memset(pwd, 0, sizeof(pwd));
+    if (slot == -1) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
+    }
+
+    return AT_RESULT_CODE_OK;
+}
+
+static int at_setup_cmd_cwcreddel(int argc, const char **argv)
+{
+    char ssid[33];
+
+    AT_CMD_PARSE_STRING(0, ssid, sizeof(ssid));
+
+    if (strlen(ssid) == 0 || strlen(ssid) > 32) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+    if (delete_credential_from_cache(ssid) == -1) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+
+    return AT_RESULT_CODE_OK;
+}
+
+static int at_query_cmd_cwcred(int argc, const char **argv)
+{
+    for (int i = 0; i < MAX_SECURE_CRED_COUNT; i++) {
+        if (at_wifi_config->credential_cache[i].ssid[0] != 0) {
+            at_response_string("+CWCRED:\"%s\"\r\n", at_wifi_config->credential_cache[i].ssid);
+        }
+    }
+
+    return AT_RESULT_CODE_OK;
+}
+
+static int at_setup_cmd_cwjaps(int argc, const char **argv)
+{
+    char ssid[33];
+    int slot;
+    int ret;
+
+    AT_CMD_PARSE_STRING(0, ssid, sizeof(ssid));
+
+    if (strlen(ssid) == 0 || strlen(ssid) > 32) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+
+    if ((at_wifi_config->wifi_mode != WIFI_STATION_MODE) &&
+        (at_wifi_config->wifi_mode != WIFI_AP_STA_MODE)) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_OP_ERROR);
+    }
+
+    slot = find_credential_slot(ssid, NULL);
+    if (slot == -1) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+
+    memset(&at_wifi_config->sta_info, 0, sizeof(at_wifi_config->sta_info));
+    strlcpy(at_wifi_config->sta_info.ssid, ssid, sizeof(at_wifi_config->sta_info.ssid));
+    memcpy(at_wifi_config->sta_info.pwd_encrypted,
+           at_wifi_config->credential_cache[slot].pwd_encrypted,
+           64);
+    memcpy(at_wifi_config->sta_info.iv,
+           at_wifi_config->credential_cache[slot].iv,
+           sizeof(at_wifi_config->sta_info.iv));
+
+    at_wifi_config->sta_info.listen_interval = 3;
+    at_wifi_config->sta_info.scan_mode = 1;
+    at_wifi_config->sta_info.jap_timeout = 15;
+    at_wifi_config->sta_info.pmf = 1;
+    at_wifi_config->sta_info.store = 0;
+
+    at_wifi_sta_set_reconnect();
+    ret = at_wifi_sta_connect(at_wifi_config->sta_info.jap_timeout * 1000);
+    if (ret != 0) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
+    }
+
+    return AT_RESULT_CODE_OK;
+}
 #endif
 
 #ifdef CONFIG_ATMODULE_WIFI_ANTENNA_CTL
@@ -1679,11 +1800,11 @@ static int at_query_cmd_cwantnum(int argc, const char **argv)
 #endif
 
 static const at_cmd_struct at_wifi_cmd[] = {
-    //{"+WIFISP",      at_query_cmd_wifisp,      at_setup_cmd_wifisp,       NULL,                    1, 1},
+    //{"+WIFISP",      NULL, at_query_cmd_wifisp,      at_setup_cmd_wifisp,       NULL,                    1, 1},
 #ifdef CONFIG_ATMODULE_WIFI_STA
     {"+CWNETMODE",    at_query_cmd_cwnetmode,   NULL,                      NULL,                    1, 1},
     {"+CWMODE",       at_query_cmd_cwmode,      at_setup_cmd_cwmode,       NULL,                    1, 2},
-    {"+CWJAP",        at_query_cmd_cwjap,       at_setup_cmd_cwjap,        at_exe_cmd_cwjap,        2, 7},
+    {"+CWJAP",        at_query_cmd_cwjap,       at_setup_cmd_cwjap,        at_exe_cmd_cwjap,        2, 8},
     {"+CIPSTA",       at_query_cmd_cipsta,      at_setup_cmd_cipsta,       NULL,                    1, 3},
     {"+CWQAP",        NULL,                     at_setup_cmd_cwqap,        at_exe_cmd_cwqap,        0, 1},
     {"+CWLAP",        NULL,                     at_setup_cmd_cwlap,        at_exe_cmd_cwlap,        1, 6},
@@ -1710,6 +1831,10 @@ static const at_cmd_struct at_wifi_cmd[] = {
     {"+CIPAPMAC",     at_query_cmd_cipapmac,    at_setup_cmd_cipapmac,     NULL,                    1, 1},
     {"+CWCOUNTRY",    at_query_cmd_cwcountry,   at_setup_cmd_cwcountry,    NULL,                    2, 2},
     {"+CWEVT",        at_query_cmd_cwevt,       at_setup_cmd_cwevt,        NULL,                    1, 1},
+    {"+CWCREDADD",    NULL,                     at_setup_cmd_cwcredadd,    NULL,                    2, 2},
+    {"+CWCREDDEL",    NULL,                     at_setup_cmd_cwcreddel,    NULL,                    1, 1},
+    {"+CWCRED",       at_query_cmd_cwcred,      NULL,                      NULL,                    0, 0},
+    {"+CWJAPS",       NULL,                     at_setup_cmd_cwjaps,       NULL,                    1, 1},
 #endif
 #ifdef CONFIG_ATMODULE_WIFI_ANTENNA_CTL
     {"+CWANTENABLE",  at_query_cmd_cwantenable, at_setup_cmd_cwantenable,  NULL,                    2, 3},
@@ -1717,7 +1842,7 @@ static const at_cmd_struct at_wifi_cmd[] = {
     {"+CWANT",        at_query_cmd_cwant,       at_setup_cmd_cwant,        NULL,                    1, 1},
 
 #endif
-    {NULL,              NULL, NULL, NULL, 0, 0},
+    {NULL, NULL, NULL, NULL, 0, 0},
 };
 
 bool at_wifi_cmd_regist(void)

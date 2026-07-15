@@ -5,6 +5,7 @@
  */
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <byteorder.h>
 #include <bluetooth.h>
@@ -42,7 +43,6 @@
 
 #include "bt_log.h"
 
-#include "a2dp_source_audio.h"
 #include "keys.h"
 
 #if defined(CONFIG_SHELL)
@@ -102,6 +102,40 @@ static void a2dp_stream(uint8_t state);
 #if defined(CONFIG_BT_A2DP_SOURCE)
 struct k_thread media_transport;
 static void a2dp_start_cfm(void);
+
+#define A2DP_SOURCE_TEST_TONE_SBC_FRAMES 10
+#define A2DP_SOURCE_TEST_TONE_SAMPLES_PER_FRAME 128
+#define A2DP_SOURCE_TEST_TONE_CHANNELS 2
+
+static int16_t a2dp_source_test_tone_pcm[A2DP_SOURCE_TEST_TONE_SBC_FRAMES *
+                                          A2DP_SOURCE_TEST_TONE_SAMPLES_PER_FRAME *
+                                          A2DP_SOURCE_TEST_TONE_CHANNELS];
+static bool a2dp_source_test_tone_ready = false;
+
+static void a2dp_source_test_tone_init(void)
+{
+    static const int16_t sine_lut[] = {
+        0, 3196, 6269, 9102, 11585, 13623, 15136, 16069,
+        16383, 16069, 15136, 13623, 11585, 9102, 6269, 3196,
+        0, -3196, -6269, -9102, -11585, -13623, -15136, -16069,
+        -16383, -16069, -15136, -13623, -11585, -9102, -6269, -3196,
+    };
+    const size_t sample_frames = A2DP_SOURCE_TEST_TONE_SBC_FRAMES *
+                                 A2DP_SOURCE_TEST_TONE_SAMPLES_PER_FRAME;
+
+    if (a2dp_source_test_tone_ready) {
+        return;
+    }
+
+    for (size_t i = 0; i < sample_frames; i++) {
+        int16_t sample = sine_lut[i % ARRAY_SIZE(sine_lut)];
+
+        a2dp_source_test_tone_pcm[i * A2DP_SOURCE_TEST_TONE_CHANNELS] = sample;
+        a2dp_source_test_tone_pcm[i * A2DP_SOURCE_TEST_TONE_CHANNELS + 1] = sample;
+    }
+
+    a2dp_source_test_tone_ready = true;
+}
 #endif
 static struct a2dp_callback a2dp_callbacks =
 {
@@ -1082,19 +1116,21 @@ static void a2dp_stream(uint8_t state)
 static bool media_task_create = false;
 static void media_thread(void *args)
 {
+   a2dp_source_test_tone_init();
+
    while (1) 
    {
         if(stream_pause == false)
         {
             int err;
-            err = bt_a2dp_send_media(audio_buf, audio_buf_size);
+            err = bt_a2dp_send_media(a2dp_source_test_tone_pcm, sizeof(a2dp_source_test_tone_pcm));
             if (err) 
             {
                 printf("send media fail %d\r\n", err);
             }
             else 
             {
-                vTaskDelay(3000);
+                vTaskDelay(1);
             }
         }
         else

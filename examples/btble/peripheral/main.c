@@ -146,13 +146,23 @@ int main(void)
     /* ble stack need easyflash kv */
     easyflash_init();
 
-#if defined(BL616)||defined(BL618DG)||defined(BL602) || defined(BL616CL)
     /* Init rf */
     if (0 != rfparam_init(0, NULL, 0)) {
         printf("PHY RF init failed!\r\n");
         return 0;
     }
-#endif
+
+    #if defined(BL618DG)
+    #if defined(CONFIG_BTBLE_USE_STANDALONE_PATH)
+    printf("cmd_set_btble_standalone\r\n");
+    extern void cmd_set_btble_standalone(int argc, char **argv);
+    cmd_set_btble_standalone(0, 0);
+    #else
+    printf("cmd_set_btble_combo\r\n");
+    extern void cmd_set_btble_combo(int argc, char **argv);
+    cmd_set_btble_combo(0, 0);
+    #endif
+    #endif
 
     xTaskCreate(app_start_task, (char *)"app_start", 1024, NULL, configMAX_PRIORITIES - 2, &app_start_handle);
 

@@ -879,4 +879,10 @@ then it does disconnected flow once more. This will cause hardfault issue becaus
  * works. Late name completions are dropped via the detached-callback guards. */
 #define BFLB_BREDR_PATCH_FIX_DISCOVERY_STOP_DURING_NAME_RESOLVE
 
+//http://jira.bouffalolab.com/browse/BS-1268
+#define BFLB_BLE_PATCH_SELECT_CONN_BY_ROLE
+//http://jira.bouffalolab.com/browse/BS-1268
+#define BFLB_BLE_PATCH_HANDLE_EXISTED_CONN_ERROR_CODE
+//http://jira.bouffalolab.com/browse/BS-1273
+#define BFLB_BLE_PATCH_FILTER_CONN_INFO_CONNECTED_LE
 #endif /* BLE_CONFIG_H */

@@ -28,25 +28,34 @@
 #include "bl_mipi_dpi_v2.h"
 #include "bflb_dpi.h"
 #include "bflb_osd.h"
-#include "bflb_mjdec.h"
 #include "bflb_mtimer.h"
 #include "bflb_l1c.h"
 #include "bflb_gpio.h"
 #include "board.h"
+#include <string.h>
 
 struct bflb_device_s *dpi_dev, *osd_dev;
 
 static volatile void *screen_last = NULL;
 static volatile void *next_disp_buffer = NULL;
 
-/* Flag to enable MJDEC ISR processing */
-extern uint8_t dpi_mjdec_isr_enable_flag;
-
 typedef void (*mipi_dpi_v2_callback)(void);
 static volatile mipi_dpi_v2_callback lcd_mipi_dpi_frame_callback = NULL;
 static volatile mipi_dpi_v2_callback lcd_mipi_dpi_frame_swap_callback = NULL;
 
-static void osd_layer_isr(int irq, void *arg);
+static void osd0_layer_isr(int irq, void *arg);
+
+/**
+ * @brief Base (DPI background) layer swap, invoked from the OSD SEOF ISR.
+ *
+ * Weak no-op by default: a plain LVGL app that only uses the OSD0 overlay needs
+ * nothing here (the base layer just scans black). An app that drives a video
+ * background overrides this (see the video pipeline in dpi_manager.c) to latch
+ * the next decoded frame into the DPI base layer at the frame boundary.
+ */
+__attribute__((weak)) void bl_mipi_dpi_v2_osd0_base_layer_swap(void)
+{
+}
 
 /* Global DPI configuration */
 static lcd_mipi_dpi_v2_init_t *dpi_para = NULL;
@@ -72,9 +81,11 @@ int bl_mipi_dpi_v2_init(lcd_mipi_dpi_v2_init_t *init_config)
     }
     dpi_para = init_config;
 
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
-    /* When using OSD layer switch, base layer uses YUV planar format for MJDEC output,
-       and OSD layer displays LVGL RGB content on top */
+    /* Single OSD0-overlay path: the DPI base layer scans a YUV background
+       (framebuffer_addr starts at 0 -> black; the video pipeline switches in real
+       YUV frames at runtime via the base-layer swap), and OSD0 blends the LVGL
+       content on top. board_dpi_gpio_init() is done by the application (main.c)
+       before lcd_init(). */
     struct bflb_dpi_config_s dpi_config = {
         .width = init_config->width,
         .height = init_config->height,
@@ -88,7 +99,7 @@ int bl_mipi_dpi_v2_init(lcd_mipi_dpi_v2_init_t *init_config)
         .input_sel = LCD_DPI_V2_INPUT_SEL,
         .test_pattern = LCD_DPI_V2_TEST_PATTERN,
         .data_format = DPI_DATA_FORMAT_Y_UV_PLANAR,
-        .framebuffer_addr = 0, /* Will be set by MJDEC via bflb_dpi_framebuffer_switch */
+        .framebuffer_addr = 0,
         .uv_framebuffer_addr = 0,
     };
 
@@ -99,49 +110,7 @@ int bl_mipi_dpi_v2_init(lcd_mipi_dpi_v2_init_t *init_config)
 
     printf("dpi enable\r\n");
     bflb_dpi_enable(dpi_dev);
-#else
 
-    board_dpi_gpio_init();
-
-    /* Normal mode: base layer uses RGB format */
-    struct bflb_dpi_config_s dpi_config = {
-        .width = init_config->width,
-        .height = init_config->height,
-        .hsw = init_config->hsw,
-        .hbp = init_config->hbp,
-        .hfp = init_config->hfp,
-        .vsw = init_config->vsw,
-        .vbp = init_config->vbp,
-        .vfp = init_config->vfp,
-        .interface = LCD_DPI_V2_INTERFACE_TYPE,
-        .input_sel = LCD_DPI_V2_INPUT_SEL,
-        .test_pattern = LCD_DPI_V2_TEST_PATTERN,
-        .data_format = (init_config->pixel_format == LCD_MIPI_DPI_V2_PIXEL_FORMAT_RGB565) ? DPI_DATA_FORMAT_RGB565 :
-                                                                                            DPI_DATA_FORMAT_NRGB8888,
-        .framebuffer_addr = (uint32_t)init_config->frame_buff,
-    };
-#endif
-
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
-    struct bflb_osd_blend_config_s osd1_blend_config = {
-        .blend_format = (init_config->pixel_format == LCD_MIPI_DPI_V2_PIXEL_FORMAT_RGB565) ? OSD_BLEND_FORMAT_RGB565 : OSD_BLEND_FORMAT_ARGB8888,
-        .order_a = 3,
-        .order_rv = 2,
-        .order_gy = 1,
-        .order_bu = 0,
-        .coor = {
-            .start_x = 0,
-            .start_y = 0,
-            .end_x = init_config->width,
-            .end_y = init_config->height,
-        },
-        .layer_buffer_addr = 0,
-    };
-    osd_dev = bflb_device_get_by_name(BFLB_NAME_OSD1);
-#else
-    bflb_l1c_dcache_clean_range(init_config->frame_buff, LCD_W * LCD_H * (LCD_COLOR_DEPTH / 8));
-    bflb_dpi_init(dpi_dev, &dpi_config);
-    bflb_dpi_enable(dpi_dev);
     struct bflb_osd_blend_config_s osd0_blend_config = {
         .blend_format = (init_config->pixel_format == LCD_MIPI_DPI_V2_PIXEL_FORMAT_RGB565) ? OSD_BLEND_FORMAT_RGB565 : OSD_BLEND_FORMAT_ARGB8888,
         .order_a = 3,
@@ -154,24 +123,20 @@ int bl_mipi_dpi_v2_init(lcd_mipi_dpi_v2_init_t *init_config)
             .end_x = init_config->width,
             .end_y = init_config->height,
         },
-    (uint32_t)init_config->frame_buff,
+        .layer_buffer_addr = (uint32_t)init_config->frame_buff,
     };
     osd_dev = bflb_device_get_by_name(BFLB_NAME_OSD0);
-#endif
+    if (osd_dev == NULL) {
+        return -3;
+    }
 
     bflb_osd_int_mask(osd_dev, false);
-    bflb_irq_attach(osd_dev->irq_num, osd_layer_isr, NULL);
+    bflb_irq_attach(osd_dev->irq_num, osd0_layer_isr, NULL);
     bflb_irq_enable(osd_dev->irq_num);
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
-    /* init blend 1 layer */
-    bflb_osd_blend_init(osd_dev, &osd1_blend_config);
-    /* Set global alpha（disabled now） */
-    // bflb_osd_blend_set_global_a(osd_dev, true, 0x50);
-    bflb_osd_blend_enable(osd_dev);
-#else
-    /* init blend 0 layer */
+
+    /* init blend 0 layer (the LVGL overlay) */
     bflb_osd_blend_init(osd_dev, &osd0_blend_config);
-#endif
+    bflb_osd_blend_enable(osd_dev);
 
     return 0;
 }
@@ -192,16 +157,14 @@ int bl_mipi_dpi_v2_screen_switch(void *screen_buffer)
     }
 
     /* Clean cache for new framebuffer */
-    bflb_l1c_dcache_clean_range(screen_buffer, LCD_W * LCD_H * (LCD_COLOR_DEPTH / 8));
+    if (screen_buffer != NULL) {
+        bflb_l1c_dcache_clean_range(screen_buffer, LCD_W * LCD_H * (LCD_COLOR_DEPTH / 8));
+    }
 
     next_disp_buffer = screen_buffer;
 
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
+    /* Re-point the OSD0 blend overlay (the LVGL canvas) at the new buffer. */
     bflb_osd_blend_set_layer_buffer(osd_dev, (uint32_t)screen_buffer);
-#else
-    /* Update framebuffer address in DPI hardware */
-    bflb_dpi_framebuffer_switch(dpi_dev, (uint32_t)screen_buffer);
-#endif
 
     return 0;
 }
@@ -213,11 +176,7 @@ int bl_mipi_dpi_v2_screen_switch(void *screen_buffer)
  */
 void *bl_mipi_dpi_v2_get_screen_using(void)
 {
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
     uint32_t addr = bflb_osd_blend_get_layer_buffer(osd_dev);
-#else
-    uint32_t addr = bflb_dpi_get_framebuffer_using(dpi_dev);
-#endif
     return (void *)addr;
 }
 
@@ -238,27 +197,15 @@ int bl_mipi_dpi_v2_frame_callback_register(uint32_t callback_type, void (*callba
     return 0;
 }
 
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
-extern struct bflb_device_s *dpi_dev;
-extern volatile struct bflb_mjdec_config_s mjdec_config;
-extern volatile uint32_t pic_count;
-#endif
-
-static void osd_layer_isr(int irq, void *arg)
+static void osd0_layer_isr(int irq, void *arg)
 {
     uint8_t swap_flag = 0;
 
     bflb_osd_int_clear(osd_dev);
 
-#if defined(LCD_DPI_V2_USE_OSD_LAYER_SWITCH) && LCD_DPI_V2_USE_OSD_LAYER_SWITCH
-    if (dpi_mjdec_isr_enable_flag) {
-        bflb_dpi_framebuffer_planar_switch(dpi_dev, mjdec_config.output_bufaddr0, mjdec_config.output_bufaddr1);
-        pic_count++;
-        dpi_mjdec_isr_enable_flag = 0;
-    }
-#endif
+    /* Base (DPI background) layer swap -- weak no-op unless an app overrides it. */
+    bl_mipi_dpi_v2_osd0_base_layer_swap();
 
-    /* Set the flag to allow MJDEC ISR to process next interrupt */
     if (screen_last != next_disp_buffer) {
         swap_flag = 1;
         screen_last = next_disp_buffer;

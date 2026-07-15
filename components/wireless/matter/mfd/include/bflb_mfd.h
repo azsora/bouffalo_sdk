@@ -7,7 +7,7 @@ extern "C" {
 
 #define VERSION_MFD_MAJOR 1
 #define VERSION_MFD_MINOR 6
-#define VERSION_MFD_PATCH 3
+#define VERSION_MFD_PATCH 4
 
 bool mfd_init(void);
 

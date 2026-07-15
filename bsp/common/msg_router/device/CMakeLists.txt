@@ -7,7 +7,7 @@ sdk_add_include_directories(msg_ctrl)
 sdk_library_add_sources(msg_ctrl/mr_msg_ctrl.c)
 
 if(CONFIG_MR_SDIO_DRIVER)
-    set(SDIO2_LIMITED_CHIPS "bl616" "bl616cl")
+    set(SDIO2_LIMITED_CHIPS "bl602" "bl616" "bl616cl")
     set(SDIO3_LIMITED_CHIPS "bl618dg")
 
     sdk_add_include_directories(sdio_driver)

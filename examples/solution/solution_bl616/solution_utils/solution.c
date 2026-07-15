@@ -394,7 +394,7 @@ void solution_init(void)
 
 #if IS_ENABLED(CONFIG_SOLUTION_FUNC_HIBOOSTER_TX)
     /* Default startup of the sending end (server) */
-    hb_sender_init(0);
+    // hb_sender_init(0);
 #endif
 
 #if IS_ENABLED(CONFIG_SOLUTION_FUNC_HIBOOSTER_RX)

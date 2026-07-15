@@ -8,6 +8,7 @@
   mipi dsi video interface (panel drives its own PLL/clock/GPIO via lcd_init)
     LCD_DSI_ILI9881C_KD050020      (ILI9881C 720x1280, RGB565, 4-lane, e.g. KD050HDFIA020, BL618DG)
     LCD_DSI_ILI9881C_KD050023W4    (ILI9881C 720x1280, RGB565, 2-lane, e.g. KD050HDFIA023-W4, BL618DG)
+    LCD_DSI_ILI9806E_KD050FWFIA019 (ILI9806E 480x854, RGB565, 2-lane, e.g. KD050FWFIA019, BL618DG)
     LCD_DSI_ST7102_YH494           (ST7102 480x960, RGB565, 2-lane, e.g. YH-494BSAC002N1, BL618DG)
     LCD_DSI_AXS15231B_HS035        (AXS15231B 172x640, RGB565 link, ARGB8888 OSD, 1-lane, firmware-init, BL618DG)
 
@@ -25,7 +26,7 @@
 #define LCD_DSI_AXS15231B_HS035
 
 /* --------- DSI panels: reset + backlight live here (board-specific timing) --------- */
-#if defined LCD_DSI_ST7102_YH494 || defined LCD_DSI_ILI9881C_KD050023W4 || defined LCD_DSI_ILI9881C_KD050020 || defined LCD_DSI_AXS15231B_HS035
+#if defined LCD_DSI_ST7102_YH494 || defined LCD_DSI_ILI9881C_KD050023W4 || defined LCD_DSI_ILI9881C_KD050020 || defined LCD_DSI_ILI9806E_KD050FWFIA019 || defined LCD_DSI_AXS15231B_HS035
 
     /* DSI panel reset is driven by the LCD framework: lcd_init() pulses the reset
      * GPIO (per these macros) before calling into the panel's bring-up. Reset
@@ -45,6 +46,13 @@
     #define LCD_BACKLIGHT_EN            1
     #define LCD_BACKLIGHT_PIN          GPIO_PIN_40 /* backlight enable on this board */
     #define LCD_BACKLIGHT_ACTIVE_LEVEL 1          /* active-high: drive high to light */
+
+    /* ILI9806E panel orientation via MADCTL (0x36), applied after its init table.
+     * Board-mounting property, so it lives here rather than in the panel driver.
+     * Only consumed when LCD_DSI_ILI9806E_KD050FWFIA019 is the selected panel.
+     *   0: panel default orientation
+     *   1: 180-degree rotation/mirror */
+    #define ILI9806E_KD050FWFIA019_ROTATE_180  0
 
 /* --------- DPI panel configs (copied verbatim from bsp/common/lcd/lcd_conf.h) --------- */
 
@@ -299,12 +307,6 @@
         4: Yellow
     */
     #define LCD_DPI_V2_TEST_PATTERN    0
-
-    /* Enable OSD layer switch for screen buffer updates.
-       When enabled, the base layer is YUV planar (MJDEC video output) and the OSD
-       layer shows LVGL RGB content on top. This project's dpi_manager + lv_port
-       depend on it being 1. */
-    #define LCD_DPI_V2_USE_OSD_LAYER_SWITCH 1
 #endif
 
 /* clang-format on */

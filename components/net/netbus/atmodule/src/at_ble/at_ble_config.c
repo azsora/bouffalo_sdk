@@ -20,6 +20,7 @@
 #include "at_ble_config.h"
 #include "bluetooth.h"
 #include "at_pal.h"
+#include "at_utils_crypto.h"
 
 ble_config *at_ble_config = NULL;
 
@@ -34,13 +35,19 @@ int at_ble_config_init(void)
     memset(at_ble_config, 0, sizeof(ble_config));
     at_ble_config->work_role = BLE_DISABLE;
     size_t value_len __attribute__((unused)) = 0;
-    
+
     if (!at_config_read(AT_CONFIG_KEY_BLE_NAME, &at_ble_config->ble_name, sizeof(at_ble_config->ble_name))) {
         AT_CMD_PRINTF("BLE name config read failed, using default\r\n");
         strlcpy(at_ble_config->ble_name, "BFLB-AT", sizeof(at_ble_config->ble_name));
-        bt_set_name(at_ble_config->ble_name); 
+        bt_set_name(at_ble_config->ble_name);
     }
-    
+    if (!at_config_read(AT_CONFIG_KEY_BLE_AES_IV, &at_ble_config->aes_iv, sizeof(at_ble_config->aes_iv))) {
+        AT_CMD_PRINTF("BLE AES config read failed, using default\r\n");
+        at_ble_config->aes_enable = 0;
+    }
+    else
+        at_ble_config->aes_enable = 1;
+
     bt_set_name(at_ble_config->ble_name);
 
     at_ble_config->adv_param.adv_int_min = 0xA0;
@@ -53,8 +60,11 @@ int at_ble_config_init(void)
     at_ble_config->scan_param.filter_policy = 0;
     at_ble_config->scan_param.scan_interval = 40;
     at_ble_config->scan_param.scan_window = 40;
+
+    at_ble_config->use_static_random_addr = false;
     at_ble_config->ble_sec_param = 0x03;
     at_ble_config->ble_sec_lvl = 1;
+    at_ble_config->ble_bond_enable = true;
     #if defined(CONFIG_BT_BAS_SERVER)
     at_ble_config->ble_bas_init=0;
     #endif
@@ -82,6 +92,39 @@ int at_ble_config_save(const char *key)
         return -1;
 }
 
+int at_ble_generate_aes_iv(void)
+{
+    if (!at_ble_config ) {
+        AT_CMD_PRINTF("Invalid arguments to at_ble_generate_aes_iv\r\n");
+        return -1;
+    }
+
+    if (!at_config_read(AT_CONFIG_KEY_BLE_AES_IV, &at_ble_config->aes_iv, sizeof(at_ble_config->aes_iv)))
+    {
+        memset(&at_ble_config->aes_iv,0, sizeof(at_ble_config->aes_iv));
+        at_utils_crypto_get_random_iv(at_ble_config->aes_iv);
+
+        if(at_config_write(AT_CONFIG_KEY_BLE_AES_IV, &at_ble_config->aes_iv, sizeof(at_ble_config->aes_iv)))
+        {
+            at_ble_config->aes_enable = 1;
+            if(at_utils_crypto_aes_key_init() !=0)
+            {
+                ef_del_env(AT_CONFIG_KEY_BLE_AES_IV);
+                return -1;
+            }
+            return 0;
+        }
+        else
+        {
+            return -1;
+        }
+
+
+    }
+    else
+        return -1;
+}
+
 int at_ble_config_default(void)
 {
     if (at_ble_config == NULL) {
@@ -92,7 +135,7 @@ int at_ble_config_default(void)
     memset(at_ble_config, 0, sizeof(ble_config));
     at_ble_config->work_role = BLE_DISABLE;
     strlcpy(at_ble_config->ble_name, "BFLB-AT", sizeof(at_ble_config->ble_name));
-    bt_set_name(at_ble_config->ble_name); 
+    bt_set_name(at_ble_config->ble_name);
     at_ble_config->adv_param.adv_int_min = 0xA0;
     at_ble_config->adv_param.adv_int_max = 0xD0;
     at_ble_config->adv_param.adv_type = 0;
@@ -104,6 +147,8 @@ int at_ble_config_default(void)
     at_ble_config->scan_param.scan_window = 40;
     at_ble_config->ble_sec_param = 0x03;
     at_ble_config->ble_sec_lvl = 1;
+    at_ble_config->ble_bond_enable = true;
+    at_ble_config->use_static_random_addr = false;
     #if defined(CONFIG_BT_BAS_SERVER)
     at_ble_config->ble_bas_init=0;
     #endif
@@ -115,4 +160,3 @@ int at_ble_config_default(void)
     #endif
     return 0;
 }
-

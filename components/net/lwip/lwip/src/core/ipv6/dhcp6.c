@@ -62,6 +62,10 @@
 #include "lwip/dhcp6.h"
 #include "lwip/prot/dhcp6.h"
 #include "lwip/def.h"
+#include "lwip/timeouts.h"
+#if IPV6_TIMER_PRECISE_NEEDED
+#include "lwip/priv/ipv6_timer_priv.h"
+#endif
 #include "lwip/udp.h"
 #include "lwip/dns.h"
 
@@ -208,6 +212,9 @@ void dhcp6_cleanup(struct netif *netif)
   LWIP_ASSERT("netif != NULL", netif != NULL);
 
   if (netif_dhcp6_data(netif) != NULL) {
+#if IPV6_TIMER_PRECISE_NEEDED
+    dhcp6_disable(netif);
+#endif
     mem_free(netif_dhcp6_data(netif));
     netif_set_client_data(netif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP6, NULL);
   }
@@ -259,7 +266,13 @@ dhcp6_set_state(struct dhcp6 *dhcp6, u8_t new_state, const char *dbg_caller)
     dhcp6->state = new_state;
     dhcp6->tries = 0;
     dhcp6->request_timeout = 0;
+#if IPV6_TIMER_PRECISE_NEEDED
+    dhcp6->request_timeout_deadline_ms = 0;
+#endif
   }
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+  ipv6_timer_needed(dhcp6_tmr);
+#endif
 }
 
 static int
@@ -483,7 +496,14 @@ dhcp6_information_request(struct netif *netif, struct dhcp6 *dhcp6)
   }
   msecs = (u16_t)((dhcp6->tries < 6 ? 1 << dhcp6->tries : 60) * 1000);
   dhcp6->request_timeout = (u16_t)((msecs + DHCP6_TIMER_MSECS - 1) / DHCP6_TIMER_MSECS);
+#if IPV6_TIMER_PRECISE_NEEDED
+  dhcp6->request_timeout_deadline_ms = lwip_ipv6_timer_deadline_from_ms(
+      (u32_t)dhcp6->request_timeout * DHCP6_TIMER_MSECS);
+#endif
   LWIP_DEBUGF(DHCP6_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp6_information_request(): set request timeout %"U16_F" msecs\n", msecs));
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+  ipv6_timer_needed(dhcp6_tmr);
+#endif
 }
 
 static err_t
@@ -790,16 +810,27 @@ void
 dhcp6_tmr(void)
 {
   struct netif *netif;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t now = sys_now();
+#endif
+
   /* loop through netif's */
   NETIF_FOREACH(netif) {
     struct dhcp6 *dhcp6 = netif_dhcp6_data(netif);
     /* only act on DHCPv6 configured interfaces */
     if (dhcp6 != NULL) {
       /* timer is active (non zero), and is about to trigger now */
+#if IPV6_TIMER_PRECISE_NEEDED
+      if ((dhcp6->request_timeout > 0) &&
+          lwip_ipv6_timer_deadline_due(dhcp6->request_timeout_deadline_ms, now)) {
+        dhcp6->request_timeout = 0;
+        dhcp6->request_timeout_deadline_ms = 0;
+#else
       if (dhcp6->request_timeout > 1) {
         dhcp6->request_timeout--;
       } else if (dhcp6->request_timeout == 1) {
         dhcp6->request_timeout--;
+#endif
         /* { dhcp6->request_timeout == 0 } */
         LWIP_DEBUGF(DHCP6_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp6_tmr(): request timeout\n"));
         /* this client's request timeout triggered */
@@ -808,5 +839,27 @@ dhcp6_tmr(void)
     }
   }
 }
+
+#if IPV6_TIMER_PRECISE_NEEDED
+u32_t
+dhcp6_tmr_sleeptime(void)
+{
+  struct netif *netif;
+  u32_t min_wake = SYS_TIMEOUTS_SLEEPTIME_INFINITE;
+  u32_t now = sys_now();
+
+  NETIF_FOREACH(netif) {
+    struct dhcp6 *dhcp6 = netif_dhcp6_data(netif);
+
+    if ((dhcp6 != NULL) && (dhcp6->request_timeout > 0)) {
+      min_wake = LWIP_MIN(min_wake,
+          lwip_ipv6_timer_deadline_sleeptime(
+              dhcp6->request_timeout_deadline_ms, now));
+    }
+  }
+
+  return min_wake;
+}
+#endif
 
 #endif /* LWIP_IPV6 && LWIP_IPV6_DHCP6 */

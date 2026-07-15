@@ -60,7 +60,7 @@ static void main_init_task(void *param)
     /* wifi init */
     extern void wifi_start_firmware_task(void *param);
     xTaskCreate(wifi_start_firmware_task, "wifi init", 1024, NULL, 10, NULL);
-    vTaskDelay(200); /* Wait for network ready */
+    vTaskDelay(500); /* Wait for network ready */
 #endif
 
 #if IS_ENABLED(CONFIG_CHERRYUSB_HOST)
@@ -73,9 +73,17 @@ static void main_init_task(void *param)
     /* solution util init */
     solution_init();
 
+    /************** image transmission *************** */
+
+#if IS_ENABLED(CONFIG_SOLUTION_FUNC_HIBOOSTER_TX)
+    /* Default startup of the sending end (server) */
+    extern int hb_sender_init(uint16_t local_port);
+    hb_sender_init(0);
+#endif
+
 #if IS_ENABLED(CONFIG_SOLUTION_FUNC_HIBOOSTER_RX)
     /* hibooster rx start */
-    int hb_recv_init(uint16_t local_port, uint8_t peer_ip0, uint8_t peer_ip1, uint8_t peer_ip2, uint8_t peer_ip3, uint16_t peer_port);
+    extern int hb_recv_init(uint16_t local_port, uint8_t peer_ip0, uint8_t peer_ip1, uint8_t peer_ip2, uint8_t peer_ip3, uint16_t peer_port);
     extern int hb_recv_start(void);
     hb_recv_init(9000, 192, 168, 169, 1, 8800);
     hb_recv_start();

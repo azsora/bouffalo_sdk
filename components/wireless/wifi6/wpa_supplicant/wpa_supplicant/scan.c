@@ -2914,6 +2914,7 @@ wpa_scan_clone_params(const struct wpa_driver_scan_params *src)
 	params->only_new_results = src->only_new_results;
 	params->low_priority = src->low_priority;
 	params->duration = src->duration;
+	params->probe_cnt = src->probe_cnt;
 	params->duration_mandatory = src->duration_mandatory;
 	params->oce_scan = src->oce_scan;
 

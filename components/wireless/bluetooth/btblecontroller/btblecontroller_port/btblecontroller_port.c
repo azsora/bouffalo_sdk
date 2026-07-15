@@ -309,6 +309,44 @@ __attribute__((weak)) void btblecontroller_gpio_config(uint8_t pin, uint8_t is_h
         bflb_gpio_reset(gpio, pin);
     }
 }
+
+/**
+ * @brief Trigger RC32K XTAL counter calibration (setup phase)
+ * Configures registers to start counting RC32K cycles using XTAL as reference
+ */
+__attribute__((weak))  void btblecontroller_rc32k_xtal_count_trigger(void)
+{
+    //todo,call API from driver which is not ready
+}
+
+/**
+ * @brief Wait for RC32K XTAL counter calibration and get result
+ * @return xtal_cnt2 value (count result)
+ */
+__attribute__((weak)) uint16_t btblecontroller_rc32k_xtal_count_wait_result(void)
+{
+    //todo,call API from driver which is not ready
+    //Just temporarily read the value directly from the register.
+
+    uint32_t reg_val;
+    uint16_t xtal_cnt2;
+    uint32_t xtal_cnt2_res;
+    uint32_t xtal_cnt2_all;
+
+   //comment out because btblecontroller_rc32k_xtal_count_trigger is not implemented now.
+    /* Wait for xtal_cnt_32k_done */
+   // while ((BL_RD_REG(PDS_BASE, PDS_XTAL_CNT_32K) & PDS_XTAL_CNT_32K_DONE_MSK) == 0) {
+        /* busy wait */
+   // }
+
+    /* Read count values */
+    reg_val = BL_RD_REG(PDS_BASE, PDS_XTAL_CNT_32K);
+    xtal_cnt2 = (reg_val >> 6) & 0x1FFF;
+    xtal_cnt2_res = BL_GET_REG_BITS_VAL(reg_val, PDS_RO_XTAL_CNT_32K_RES);
+    xtal_cnt2_all = xtal_cnt2 + xtal_cnt2_res / 64;
+
+    return xtal_cnt2;
+}
 #endif
 
 

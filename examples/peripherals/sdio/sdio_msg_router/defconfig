@@ -13,7 +13,9 @@ CONFIG_SHELL                =y
 CONFIG_FREERTOS             =y
 
 # EMAC PHY
+ifneq ($(CHIP),bl602)
 CONFIG_BSP_ETH_PHY          =y
+endif
 
 # Message Router
 CONFIG_BSP_MR               =y
@@ -23,7 +25,9 @@ CONFIG_MR_MSG_CTRL_SDIO     =y
 CONFIG_MR_SDIO_QUEUE_DEPTH  =4
 # MR NETDEV
 CONFIG_MR_NETDEV            =y
+ifneq ($(CHIP),bl602)
 CONFIG_MR_NETDEV_EMAC       =y
+endif
 # MR NETLINK
 CONFIG_MR_NETLINK           =y
 CONFIG_MR_NETLINK_CLI       =y

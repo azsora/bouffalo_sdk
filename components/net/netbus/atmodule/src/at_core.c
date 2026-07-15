@@ -150,6 +150,10 @@ static int at_register_command(const at_cmd_struct *cmd)
         return -1;
     }
 
+    if (!cmd->at_name ) {
+        return -1;
+    }
+
     if (at->num_commands < AT_CMD_MAX_NUM) {
         /* Check if the command has already been registered.
         * Return 0, if it has been registered.
@@ -272,10 +276,7 @@ static int at_cmd_proc(char *name, at_cmd_type type, int argc, char **argv)
 
     if (type == AT_CMD_TYPE_TEST) {
         AT_CORE_PRINTF("test Cmd!\r\n");
-        //if (cmd->at_test_cmd == NULL)
         return AT_RESULT_CODE_ERROR;
-        //else
-        //    return cmd->at_test_cmd(argc, (const char **)argv);
     }
     else if (type == AT_CMD_TYPE_QUERY) {
          AT_CORE_PRINTF("query Cmd!\r\n");
@@ -580,4 +581,3 @@ void at_write_string(const char *format, va_list args)
 
     at->device_ops.write_data((uint8_t *)outbuf, strlen(outbuf));
 }
-

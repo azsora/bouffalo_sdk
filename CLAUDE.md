@@ -366,6 +366,11 @@ spi_dma_transfer(tx_buffer, rx_buffer, length);
 - **LittleFS** - Flash 文件系统（掉电安全）
 - **ROMFS** - 只读文件系统（资源文件）
 
+### MACSW coex 芯片差异
+- `components/wireless/macsw/modules/coexm/` 只保留共用调度逻辑，不直接写芯片特有 PTA/Coex 寄存器地址或 PTI 值。
+- 芯片差异通过 `ip/lmac/src/hal/hal_machw.h` 的平台函数下沉到 `plf/refip/src/driver/bl616cl.c`、`bl616.c`、`bl618dg.c`。
+- BL616CL 的 `0x24920028` 是 `STAT_COEX`，不能按 BL616 的 PTA `CONFIG2` 写。
+
 ## 工具链文件位置
 - **compile_commands.json** - 项目根目录（IDE 集成）
 - **CMake 配置** - `cmake/` 目录

@@ -87,8 +87,14 @@
 #if LWIP_IPV6_MLD
 #include "lwip/mld6.h"
 #endif /* LWIP_IPV6_MLD */
+#if LWIP_IPV6_REASS
+#include "lwip/ip6_frag.h"
+#endif /* LWIP_IPV6_REASS */
 #if LWIP_IPV6
 #include "lwip/nd6.h"
+#if IPV6_TIMER_PRECISE_NEEDED
+#include "lwip/priv/ipv6_timer_priv.h"
+#endif
 #endif
 
 #if LWIP_NETIF_STATUS_CALLBACK
@@ -125,6 +131,7 @@ static void netif_issue_reports(struct netif *netif, u8_t report_type);
 
 #if LWIP_IPV6
 static err_t netif_null_output_ip6(struct netif *netif, struct pbuf *p, const ip6_addr_t *ipaddr);
+static int netif_has_valid_ip6_addr(void);
 #endif /* LWIP_IPV6 */
 #if LWIP_IPV4
 static err_t netif_null_output_ip4(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipaddr);
@@ -320,7 +327,14 @@ netif_add(struct netif *netif,
 #if LWIP_IPV6_ADDRESS_LIFETIMES
     netif->ip6_addr_valid_life[i] = IP6_ADDR_LIFE_STATIC;
     netif->ip6_addr_pref_life[i] = IP6_ADDR_LIFE_STATIC;
+#if IPV6_TIMER_PRECISE_NEEDED
+    netif->ip6_addr_valid_life_deadline_ms[i] = 0;
+    netif->ip6_addr_pref_life_deadline_ms[i] = 0;
+#endif
 #endif /* LWIP_IPV6_ADDRESS_LIFETIMES */
+#if IPV6_TIMER_PRECISE_NEEDED
+    netif->ip6_addr_dad_deadline_ms[i] = 0;
+#endif
   }
   netif->output_ip6 = netif_null_output_ip6;
 #endif /* LWIP_IPV6 */
@@ -789,6 +803,9 @@ netif_remove(struct netif *netif)
 #endif /* LWIP_IPV4*/
 
 #if LWIP_IPV6
+#if LWIP_IPV6_LP_REACHABILITY_REFRESH
+  nd6_lp_refresh_netif_disable(netif);
+#endif
   for (i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
     if (ip6_addr_isvalid(netif_ip6_addr_state(netif, i))) {
       netif_do_ip_addr_changed(netif_ip_addr6(netif, i), NULL);
@@ -969,6 +986,9 @@ netif_set_down(struct netif *netif)
 
 #if LWIP_IPV6
     nd6_cleanup_netif(netif);
+#if IPV6_TIMER_PRECISE_NEEDED
+    nd6_netif_state_changed(netif);
+#endif
 #endif /* LWIP_IPV6 */
 
     NETIF_STATUS_CALLBACK(netif);
@@ -1058,6 +1078,11 @@ netif_set_link_down(struct netif *netif)
 
   if (netif->flags & NETIF_FLAG_LINK_UP) {
     netif_clear_flags(netif, NETIF_FLAG_LINK_UP);
+#if LWIP_IPV6
+#if IPV6_TIMER_PRECISE_NEEDED
+    nd6_netif_state_changed(netif);
+#endif
+#endif
     NETIF_LINK_CALLBACK(netif);
 #if LWIP_NETIF_EXT_STATUS_CALLBACK
     {
@@ -1467,10 +1492,163 @@ netif_ip6_addr_set_state(struct netif *netif, s8_t addr_idx, u8_t state)
       netif_invoke_ext_callback(netif, LWIP_NSC_IPV6_ADDR_STATE_CHANGED, &args);
     }
 #endif
+
+#if IPV6_TIMER_PRECISE_NEEDED
+    if (ip6_addr_istentative(state)) {
+      netif->ip6_addr_dad_deadline_ms[addr_idx] =
+          lwip_ipv6_timer_deadline_from_ms(ND6_TMR_INTERVAL);
+    } else {
+      netif->ip6_addr_dad_deadline_ms[addr_idx] = 0;
+    }
+    if (ip6_addr_isinvalid(state)) {
+#if LWIP_IPV6_ADDRESS_LIFETIMES
+      netif->ip6_addr_valid_life_deadline_ms[addr_idx] = 0;
+      netif->ip6_addr_pref_life_deadline_ms[addr_idx] = 0;
+#endif
+    }
+    nd6_netif_state_changed(netif);
+#endif
   }
   LWIP_DEBUGF(NETIF_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("netif: IPv6 address %d of interface %c%c set to %s/0x%"X8_F"\n",
               addr_idx, netif->name[0], netif->name[1], ip6addr_ntoa(netif_ip6_addr(netif, addr_idx)),
               netif_ip6_addr_state(netif, addr_idx)));
+}
+
+#if LWIP_IPV6_ADDRESS_LIFETIMES && IPV6_TIMER_PRECISE_NEEDED
+u32_t
+netif_ip6_addr_valid_life_precise(const struct netif *netif, s8_t addr_idx)
+{
+  u32_t life;
+
+  if ((netif == NULL) || (addr_idx < 0) ||
+      (addr_idx >= LWIP_IPV6_NUM_ADDRESSES)) {
+    return IP6_ADDR_LIFE_STATIC;
+  }
+
+  life = netif->ip6_addr_valid_life[addr_idx];
+  if ((life == IP6_ADDR_LIFE_STATIC) || ip6_addr_life_isinfinite(life)) {
+    return life;
+  }
+
+  return lwip_ipv6_timer_lifetime_remaining_secs(
+      life, netif->ip6_addr_valid_life_deadline_ms[addr_idx], sys_now());
+}
+
+void
+netif_ip6_addr_set_valid_life_precise(struct netif *netif, s8_t addr_idx,
+                                      u32_t secs)
+{
+  LWIP_ASSERT_CORE_LOCKED();
+  LWIP_ERROR("netif_ip6_addr_set_valid_life_precise: invalid netif",
+             netif != NULL, return);
+  LWIP_ERROR("netif_ip6_addr_set_valid_life_precise: invalid address index",
+             (addr_idx >= 0) && (addr_idx < LWIP_IPV6_NUM_ADDRESSES), return);
+
+  netif->ip6_addr_valid_life[addr_idx] = secs;
+  if ((secs == IP6_ADDR_LIFE_STATIC) || ip6_addr_life_isinfinite(secs)) {
+    netif->ip6_addr_valid_life_deadline_ms[addr_idx] = 0;
+  } else {
+    netif->ip6_addr_valid_life_deadline_ms[addr_idx] =
+        lwip_ipv6_timer_deadline_from_secs(secs);
+  }
+  nd6_netif_state_changed(netif);
+}
+
+u32_t
+netif_ip6_addr_pref_life_precise(const struct netif *netif, s8_t addr_idx)
+{
+  u32_t life;
+
+  if ((netif == NULL) || (addr_idx < 0) ||
+      (addr_idx >= LWIP_IPV6_NUM_ADDRESSES)) {
+    return IP6_ADDR_LIFE_STATIC;
+  }
+
+  life = netif->ip6_addr_pref_life[addr_idx];
+  if (ip6_addr_life_isinfinite(life) ||
+      (netif->ip6_addr_valid_life[addr_idx] == IP6_ADDR_LIFE_STATIC)) {
+    return life;
+  }
+
+  return lwip_ipv6_timer_lifetime_remaining_secs(
+      life, netif->ip6_addr_pref_life_deadline_ms[addr_idx], sys_now());
+}
+
+void
+netif_ip6_addr_set_pref_life_precise(struct netif *netif, s8_t addr_idx,
+                                     u32_t secs)
+{
+  LWIP_ASSERT_CORE_LOCKED();
+  LWIP_ERROR("netif_ip6_addr_set_pref_life_precise: invalid netif",
+             netif != NULL, return);
+  LWIP_ERROR("netif_ip6_addr_set_pref_life_precise: invalid address index",
+             (addr_idx >= 0) && (addr_idx < LWIP_IPV6_NUM_ADDRESSES), return);
+
+  netif->ip6_addr_pref_life[addr_idx] = secs;
+  if (ip6_addr_life_isinfinite(secs) ||
+      (netif->ip6_addr_valid_life[addr_idx] == IP6_ADDR_LIFE_STATIC)) {
+    netif->ip6_addr_pref_life_deadline_ms[addr_idx] = 0;
+  } else {
+    netif->ip6_addr_pref_life_deadline_ms[addr_idx] =
+        lwip_ipv6_timer_deadline_from_secs(secs);
+  }
+  nd6_netif_state_changed(netif);
+}
+#endif /* LWIP_IPV6_ADDRESS_LIFETIMES && IPV6_TIMER_PRECISE_NEEDED */
+
+static int
+netif_has_valid_ip6_addr(void)
+{
+  struct netif *netif;
+  s8_t i;
+
+  NETIF_FOREACH(netif) {
+    for (i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+      if (!ip6_addr_isinvalid(netif_ip6_addr_state(netif, i))) {
+        return 1;
+      }
+    }
+  }
+
+  return 0;
+}
+
+void
+netif_ip6_disable(struct netif *netif)
+{
+  s8_t i;
+
+  LWIP_ASSERT_CORE_LOCKED();
+  LWIP_ERROR("netif_ip6_disable: invalid netif", netif != NULL, return);
+
+#if LWIP_IPV6_LP_REACHABILITY_REFRESH
+  nd6_lp_refresh_netif_disable(netif);
+#endif
+
+#if LWIP_IPV6_DHCP6
+  dhcp6_disable(netif);
+#endif
+
+#if LWIP_IPV6_AUTOCONFIG
+  netif_set_ip6_autoconfig_enabled(netif, 0);
+#endif /* LWIP_IPV6_AUTOCONFIG */
+
+  for (i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
+    netif_ip6_addr_set_state(netif, i, IP6_ADDR_INVALID);
+  }
+
+#if LWIP_IPV6_MLD
+  mld6_stop(netif);
+  netif_clear_flags(netif, NETIF_FLAG_MLD6);
+#endif /* LWIP_IPV6_MLD */
+
+  nd6_cleanup_netif(netif);
+
+#if LWIP_IPV6_REASS
+  if (!netif_has_valid_ip6_addr()) {
+    ip6_reass_cleanup();
+  }
+#endif /* LWIP_IPV6_REASS */
 }
 
 /**

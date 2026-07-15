@@ -252,6 +252,58 @@ typedef struct wifi_mgmr_ap_params {
 
 typedef void (*scan_item_cb_t)(void *env, void *arg, wifi_mgmr_scan_item_t *item);
 
+#if defined(CONFIG_WL80211_P2P)
+typedef void *wifi_interface_t;
+typedef void (*scan_complete_cb_t)(void *data, void *param);
+
+enum ap_info_type {
+    AP_INFO_TYPE_SUGGEST,
+    AP_INFO_TYPE_PRESIST,
+};
+
+struct ap_info {
+    enum ap_info_type type;
+    int time_to_live;
+    uint8_t *bssid;
+    uint8_t band;
+    uint16_t freq;
+    uint8_t use_dhcp;
+};
+
+struct ap_connect_adv {
+    char *psk;
+    struct ap_info ap_info;
+#define WIFI_CONNECT_STOP_SCAN_ALL_CHANNEL_IF_TARGET_AP_FOUND     (1 << 6)
+#define WIFI_CONNECT_PCI_EN                                       (1 << 7)
+#define WIFI_CONNECT_STOP_SCAN_CURRENT_CHANNEL_IF_TARGET_AP_FOUND (1 << 8)
+#define WIFI_CONNECT_PMF_CAPABLE                                  (1 << 9)
+#define WIFI_CONNECT_PMF_REQUIRED                                 (1 << 10)
+#define WIFI_CONNECT_DEFAULT                                      (1 << 31)
+    uint32_t flags;
+};
+
+typedef struct ap_connect_adv ap_connect_adv_t;
+
+enum WIFI_STATE_ENUM_LIST {
+    WIFI_STATE_UNKNOWN = 0x00,
+    WIFI_STATE_IDLE = 0x01,
+    WIFI_STATE_CONNECTING = 0x02,
+    WIFI_STATE_CONNECTED_IP_GETTING = 0x03,
+    WIFI_STATE_CONNECTED_IP_GOT = 0x04,
+    WIFI_STATE_DISCONNECT = 0x05,
+    WIFI_STATE_WITH_AP_IDLE = 0x11,
+    WIFI_STATE_WITH_AP_CONNECTING = 0x12,
+    WIFI_STATE_WITH_AP_CONNECTED_IP_GETTING = 0x13,
+    WIFI_STATE_WITH_AP_CONNECTED_IP_GOT = 0x14,
+    WIFI_STATE_WITH_AP_DISCONNECT = 0x15,
+    WIFI_STATE_IFDOWN = 0x06,
+    WIFI_STATE_SNIFFER = 0x07,
+    WIFI_STATE_PSK_ERROR = 0x08,
+    WIFI_STATE_NO_AP_FOUND = 0x09,
+};
+#define WIFI_STATE_AP_IS_ENABLED(status) ((status) & 0x10)
+#endif
+
 /* Initialize WiFi manager and register event handlers */
 void wifi_mgmr_init(void);
 /* Enable power saving mode for STA */
@@ -300,6 +352,15 @@ uint16_t wifi_mgmr_sta_get_listen_itv(void);
 int wifi_mgmr_sta_connect(const wifi_mgmr_sta_connect_params_t *conn_param);
 /* Disconnect from current WiFi AP */
 int wifi_mgmr_sta_disconnect(void);
+#if defined(CONFIG_WL80211_P2P)
+/* Legacy enable/disable wrappers kept for WPS compatibility */
+wifi_interface_t wifi_mgmr_sta_enable(void);
+int wifi_mgmr_sta_disable(wifi_interface_t *interface);
+int wifi_mgmr_sta_connect_ext(wifi_interface_t *wifi_interface, char *ssid, char *passphr,
+                              const ap_connect_adv_t *conn_adv_param);
+int wifi_mgmr_state_get(int *state);
+int wifi_mgmr_scan(void *data, scan_complete_cb_t cb);
+#endif
 /* Get channel count for country code */
 int wifi_mgmr_get_channel_nums(const char *country_code, uint8_t *c24G_cnt, uint8_t *c5G_cnt);
 /* Get channel list for country code */
@@ -341,6 +402,13 @@ int wifi_mgmr_ap_start(const wifi_mgmr_ap_params_t *config);
  *  Others is Failed
  */
 int wifi_mgmr_ap_stop(void);
+#if defined(CONFIG_WL80211_P2P) && !defined(__NuttX__)
+/* Override the AP netif/DHCP settings that will be applied after AP start. */
+void wifi_mgmr_ap_netif_cfg_override(bool use_ipcfg, bool use_dhcpd, int start, int limit,
+                                     uint32_t ap_ipaddr, uint32_t ap_mask);
+/* Clear any pending AP netif/DHCP override. */
+void wifi_mgmr_ap_netif_cfg_reset(void);
+#endif
 
 /**
  * Delete/deauthenticate a connected STA from AP mode

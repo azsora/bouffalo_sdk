@@ -1,5 +1,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -131,6 +132,32 @@ static uint64_t get_mtime(void)
 #endif
 
 #define PDS_MIN_SLEEP_TIME 1500
+
+#define TICKLESS_HBN_RTC_COUNTER_BITS 40ULL
+#define TICKLESS_HBN_RTC_COUNTER_MASK ((1ULL << TICKLESS_HBN_RTC_COUNTER_BITS) - 1ULL)
+#define TICKLESS_HBN_RTC_COUNTER_HALF (1ULL << (TICKLESS_HBN_RTC_COUNTER_BITS - 1ULL))
+
+static inline uint64_t tickless_rtc_cnt_normalize(uint64_t rtc_cnt)
+{
+    return rtc_cnt & TICKLESS_HBN_RTC_COUNTER_MASK;
+}
+
+static inline int64_t tickless_rtc_cnt_diff(uint64_t lhs, uint64_t rhs)
+{
+    uint64_t diff = (tickless_rtc_cnt_normalize(lhs) - tickless_rtc_cnt_normalize(rhs)) &
+                    TICKLESS_HBN_RTC_COUNTER_MASK;
+
+    if (diff & TICKLESS_HBN_RTC_COUNTER_HALF) {
+        return -(int64_t)(((~diff) & TICKLESS_HBN_RTC_COUNTER_MASK) + 1ULL);
+    }
+
+    return (int64_t)diff;
+}
+
+static inline bool tickless_rtc_cnt_before(uint64_t lhs, uint64_t rhs)
+{
+    return tickless_rtc_cnt_diff(lhs, rhs) < 0;
+}
 
 static int enable_tickless = 0;
 int g_tpre = 0;
@@ -275,21 +302,24 @@ void lp_hook_pre_sys(void *env)
 
 void lp_hook_pre_sleep(iot2lp_para_t *param)
 {
-    uint64_t delta;
+    int64_t delta;
+    uint64_t min_wakeup_cnt;
 
     //TS_RECORD(TS_ALLOW_SLEEP_PDS);
     HBN_Get_RTC_Timer_Val((uint32_t *)&rtc_before_sleep, (uint32_t *)&rtc_before_sleep + 1);
+    rtc_before_sleep = tickless_rtc_cnt_normalize(rtc_before_sleep);
 
     /* measura prologue time spend  */
-    delta = rtc_before_sleep - rtc_enter_tickless;
-    tickless_debug("rtc_prologue_time_max: %" __PRI64(u), delta);
+    delta = tickless_rtc_cnt_diff(rtc_before_sleep, rtc_enter_tickless);
+    tickless_debug("rtc_prologue_time_max: %" __PRI64(d), delta);
     /* update pds prologue max time */
-    if (delta > rtc_prologue_time_max) {
-        rtc_prologue_time_max = delta;
+    if (delta > 0 && (uint64_t)delta > rtc_prologue_time_max) {
+        rtc_prologue_time_max = (uint64_t)delta;
         tickless_info("rtc_prologue_time_max: %" __PRI64(u), rtc_prologue_time_max);
     }
 
-    if (unlikely(lpfw_cfg.rtc_wakeup_cmp_cnt < (BL_US_TO_PDS_CNT(PDS_MIN_SLEEP_TIME) + rtc_before_sleep))) {
+    min_wakeup_cnt = tickless_rtc_cnt_normalize(rtc_before_sleep + BL_US_TO_PDS_CNT(PDS_MIN_SLEEP_TIME));
+    if (unlikely(tickless_rtc_cnt_before(lpfw_cfg.rtc_wakeup_cmp_cnt, min_wakeup_cnt))) {
         param->wakeup_flag = 1;
         /* set wakeup reason to RTC */
         param->wakeup_reason = LPFW_WAKEUP_TIME_OUT;
@@ -320,6 +350,9 @@ volatile int _flag = 1;
 /* wakeup schdule */
 void lp_hook_post_sys(iot2lp_para_t *param)
 {
+    int64_t sleep_delta;
+    uint64_t sleep_delta_cnt;
+
     //TS_RECORD(TS_WAKEUP_RESTORE);
 
     /* Restore CPU:320M and Mtimer:1M */
@@ -355,9 +388,12 @@ void lp_hook_post_sys(iot2lp_para_t *param)
     bl_lp_call_sys_after_exit();
 
     HBN_Get_RTC_Timer_Val((uint32_t *)&rtc_after_sleep, (uint32_t *)&rtc_after_sleep + 1);
+    rtc_after_sleep = tickless_rtc_cnt_normalize(rtc_after_sleep);
+    sleep_delta = tickless_rtc_cnt_diff(rtc_after_sleep, rtc_enter_tickless);
+    sleep_delta_cnt = sleep_delta > 0 ? (uint64_t)sleep_delta : 0;
 
     /* Compensation Tick */
-    TickType_t elapsed_ticks = pdMS_TO_TICKS(BL_PDS_CNT_TO_MS(rtc_after_sleep - rtc_enter_tickless));
+    TickType_t elapsed_ticks = pdMS_TO_TICKS(BL_PDS_CNT_TO_MS(sleep_delta_cnt));
     TickType_t compensate_ticks = elapsed_ticks;
 
     if (sleep_expected_idle_ticks && compensate_ticks > sleep_expected_idle_ticks) {
@@ -408,7 +444,7 @@ void vApplicationSleep(TickType_t xExpectedIdleTime)
 {
     eSleepModeStatus eSleepStatus;
     int32_t ble_sleep_rtc __attribute__((unused)) = 0;
-    uint64_t delta;
+    int64_t signed_delta;
     uint64_t twt_wakeup = 0;
     uint32_t wake_reason __attribute__((unused));
     int connected;
@@ -423,6 +459,7 @@ void vApplicationSleep(TickType_t xExpectedIdleTime)
 
     /* Record current time */
     HBN_Get_RTC_Timer_Val((uint32_t *)&rtc_enter_tickless, (uint32_t *)&rtc_enter_tickless + 1);
+    rtc_enter_tickless = tickless_rtc_cnt_normalize(rtc_enter_tickless);
     sleep_expected_idle_ticks = xExpectedIdleTime;
 
     /* 1 Tick must equal to 1 ms */
@@ -568,10 +605,10 @@ void vApplicationSleep(TickType_t xExpectedIdleTime)
     /* How much time do we have to sleep? */
     rtc_sleep_remain -= ahead_wakeup_cost;
     tickless_info("rtc_sleep_remain: %" __PRI64(d), rtc_sleep_remain);
-    configASSERT((signed)rtc_sleep_remain > 0);
+    configASSERT(rtc_sleep_remain > 0);
 
     /* Convert to absolute time */
-    lpfw_cfg.rtc_wakeup_cmp_cnt = rtc_enter_tickless + rtc_sleep_remain;
+    lpfw_cfg.rtc_wakeup_cmp_cnt = tickless_rtc_cnt_normalize(rtc_enter_tickless + rtc_sleep_remain);
     lpfw_cfg.mtimer_timeout_mini_us = 4500;
     lpfw_cfg.mtimer_timeout_max_us = 12000;
     lpfw_cfg.dtim_num = lpfw_cfg.dtim_origin;
@@ -588,12 +625,12 @@ void vApplicationSleep(TickType_t xExpectedIdleTime)
     tickless_info("resume wifi");
     /* } */
 
-    delta = rtc_after_sleep - lpfw_cfg.rtc_wakeup_cmp_cnt;
+    signed_delta = tickless_rtc_cnt_diff(rtc_after_sleep, lpfw_cfg.rtc_wakeup_cmp_cnt);
 
     /* update pds prologue max time */
     /* N.B. delta may be negative when "rtc_sleep_remain too small, dont enter pds" */
-    if ((signed)delta > (signed)rtc_epilogue_time_max && (signed)delta < 300) {
-        rtc_epilogue_time_max = delta;
+    if (signed_delta > (int64_t)rtc_epilogue_time_max && signed_delta < 300) {
+        rtc_epilogue_time_max = (uint64_t)signed_delta;
         tickless_info("rtc_epilogue_time_max: %" __PRI64(u), rtc_epilogue_time_max);
     }
 

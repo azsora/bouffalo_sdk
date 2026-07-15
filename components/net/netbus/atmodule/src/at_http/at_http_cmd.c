@@ -359,8 +359,8 @@ static int at_httpc_request(struct at_http_ctx *ctx,
         port = 443;
         url = url_buf + 8;
 #if LWIP_ALTCP_TLS && LWIP_ALTCP_TLS_MBEDTLS 
-        uint8_t *ca_buf = NULL, *cert_buf = NULL, *privkey_buf = NULL;
-        uint32_t ca_len, cert_len, privkey_len;
+        char *ca_buf = NULL, *cert_buf = NULL, *privkey_buf = NULL;
+        int ca_len, cert_len, privkey_len;
 
         if (ctx->https_auth_type == AT_HTTPS_NOT_AUTH) {
 
@@ -373,7 +373,7 @@ static int at_httpc_request(struct at_http_ctx *ctx,
         } else if (ctx->https_auth_type == AT_HTTPS_CLIENT_AUTH) {
 
             if (at_load_file(ctx->cert_file, (char **)&cert_buf, (int *)&cert_len) != 0 ||
-                at_load_file(ctx->key_file, (char **)&privkey_buf, (int *)&privkey_len) != 0 ||
+                at_net_ssl_load_file_decrypt(ctx->key_file, &privkey_buf, &privkey_len) != 0 ||
                 cert_buf == NULL || cert_len == 0 ||
                 privkey_buf == NULL || privkey_len == 0) {
                 at_free(cert_buf);
@@ -383,9 +383,9 @@ static int at_httpc_request(struct at_http_ctx *ctx,
             }
 
             ctx->settings.tls_config = altcp_tls_create_config_client_2wayauth(NULL, 0,
-                                                                               privkey_buf, privkey_len,
+                                                                               (const uint8_t *)privkey_buf, privkey_len,
                                                                                NULL, 0,
-                                                                               cert_buf, cert_len);
+                                                                               (const uint8_t *)cert_buf, cert_len);
             if (ctx->settings.tls_config == NULL) {
                 at_free(cert_buf);
                 at_free(privkey_buf);
@@ -402,7 +402,7 @@ static int at_httpc_request(struct at_http_ctx *ctx,
                 free_ctx(ctx);
                 return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
             }
-            ctx->settings.tls_config = altcp_tls_create_config_client(ca_buf, ca_len);
+            ctx->settings.tls_config = altcp_tls_create_config_client((const uint8_t *)ca_buf, ca_len);
             if (ctx->settings.tls_config == NULL) {
                 at_free(ca_buf);
                 free_ctx(ctx);
@@ -413,8 +413,8 @@ static int at_httpc_request(struct at_http_ctx *ctx,
         } else if (ctx->https_auth_type == AT_HTTPS_BOTH_AUTH) {
 
             if (at_load_file(ctx->cert_file, (char **)&cert_buf, (int *)&cert_len) != 0 ||
-                at_load_file(ctx->key_file, (char **)&privkey_buf, (int *)&privkey_len) != 0 ||
                 at_load_file(ctx->ca_file, (char **)&ca_buf, (int *)&ca_len) != 0 ||
+                at_net_ssl_load_file_decrypt(ctx->key_file, &privkey_buf, &privkey_len) != 0 ||
                 cert_buf == NULL || cert_len == 0 ||
                 privkey_buf == NULL || privkey_len == 0 ||
                 ca_buf == NULL || ca_len == 0) {
@@ -425,10 +425,10 @@ static int at_httpc_request(struct at_http_ctx *ctx,
                 return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
             }
 
-            ctx->settings.tls_config = altcp_tls_create_config_client_2wayauth(ca_buf, ca_len,
-                                                                               privkey_buf, privkey_len,
+            ctx->settings.tls_config = altcp_tls_create_config_client_2wayauth((const uint8_t *)ca_buf, ca_len,
+                                                                               (const uint8_t *)privkey_buf, privkey_len,
                                                                                NULL, 0,
-                                                                               cert_buf, cert_len);
+                                                                               (const uint8_t *)cert_buf, cert_len);
             if (ctx->settings.tls_config == NULL) {
                 at_free(cert_buf);
                 at_free(privkey_buf);
@@ -1114,16 +1114,16 @@ static int at_query_cmd_httprecvlen(int argc, const char **argv)
 static const at_cmd_struct at_http_cmd[] = {
     {"+HTTPRECVDATA", NULL, at_setup_cmd_httprecvdata, NULL, 2, 2},
     {"+HTTPRECVMODE", at_query_cmd_httprecvmode, at_setup_cmd_httprecvmode, NULL, 1, 1},
-    {"+HTTPRECVBUF",  at_query_cmd_httprecvbuf, at_setup_cmd_httprecvbuf, NULL, 1, 1},
-    {"+HTTPRECVLEN",  at_query_cmd_httprecvlen, NULL, NULL, 1, 1},
-    {"+HTTPCLIENT",   NULL, at_setup_cmd_httpclient, NULL, 4, 5},
-    {"+HTTPGETSIZE",  NULL, at_setup_cmd_httpgetsize, NULL, 2, 3},
-    {"+HTTPCGET",     NULL, at_setup_cmd_httpcget, NULL, 2, 3},
-    {"+HTTPCPOST",    NULL, at_setup_cmd_httpcpost, NULL, 3, 3},
-    {"+HTTPCPUT",     NULL, at_setup_cmd_httpcput, NULL, 4, 4},
-    {"+HTTPURLCFG",   at_query_cmd_httpcurlcfg, at_setup_cmd_httpcurlcfg, NULL, 1, 2},
-    {"+HTTPSSLCFG",   at_query_cmd_httpsslcfg, at_setup_cmd_httpsslcfg, NULL, 2, 5},
-    {NULL,              NULL, NULL, NULL, 0, 0},
+    {"+HTTPRECVBUF", at_query_cmd_httprecvbuf, at_setup_cmd_httprecvbuf, NULL, 1, 1},
+    {"+HTTPRECVLEN", at_query_cmd_httprecvlen, NULL, NULL, 1, 1},
+    {"+HTTPCLIENT", NULL, at_setup_cmd_httpclient, NULL, 4, 5},
+    {"+HTTPGETSIZE", NULL, at_setup_cmd_httpgetsize, NULL, 2, 3},
+    {"+HTTPCGET", NULL, at_setup_cmd_httpcget, NULL, 2, 3},
+    {"+HTTPCPOST", NULL, at_setup_cmd_httpcpost, NULL, 3, 3},
+    {"+HTTPCPUT", NULL, at_setup_cmd_httpcput, NULL, 4, 4},
+    {"+HTTPURLCFG", at_query_cmd_httpcurlcfg, at_setup_cmd_httpcurlcfg, NULL, 1, 2},
+    {"+HTTPSSLCFG", at_query_cmd_httpsslcfg, at_setup_cmd_httpsslcfg, NULL, 2, 5},
+    {NULL, NULL, NULL, NULL, 0, 0},
 };
 
 bool at_http_cmd_regist(void)
@@ -1140,4 +1140,3 @@ bool at_http_cmd_regist(void)
     else
         return false;
 }
-

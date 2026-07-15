@@ -50,6 +50,7 @@ static void audio_loop_proc_task(void *arg)
         }
         msp_msleep(100);
     }
+    free(arg);
 
     msp_task_exit(0);
 }
@@ -330,7 +331,7 @@ static int cli_player_proc(int argc, char **argv)
         char *   url;
 
         if (argc == 3) {
-            url       = argv[2];
+            url       = strdup(argv[2]);
         } else {
             printf("url error!\r\n");
             return -1;

@@ -78,7 +78,7 @@ typedef struct FactoryData
     FactoryDataElement_t        item[MFD_MAX_ELEMENT_NUM];
 } FactoryData_t;
 
-FactoryData_t g_mfd_var;
+static FactoryData_t g_mfd_var;
 
 #define IS_FLASH_ADDR(x) ((uint32_t)MFD_XIP_BASE <= (uint32_t)x && (uint32_t)x < (uint32_t)MFD_XIP_END )
 
@@ -256,11 +256,19 @@ bool mfd_init(void)
     return false;
 }
 
-static inline int mfd_copyDataItem(uint32_t id, uint8_t *pBuf, uint32_t size) 
+static inline int mfd_copyDataItem(uint32_t id, uint8_t *pBuf, uint32_t size)
 {
     FactoryDataElement_t *p = &(g_mfd_var.item[id - ELEMENT_TYPE_ELEMENT_START]);
 
-    if (0 == p->mLength || NULL == p->mValuePtr) {
+    if (NULL == pBuf) {
+        return -1;
+    }
+
+    if (NULL == p->mValuePtr) {
+        return -2;   /** element not found */
+    }
+
+    if (0 == p->mLength) {
         return 0;
     }
 
@@ -270,7 +278,7 @@ static inline int mfd_copyDataItem(uint32_t id, uint8_t *pBuf, uint32_t size)
         return p->mLength;
     }
 
-    return -1;
+    return -1;       /** buffer too small */
 }
 
 int mfd_getDacCert(uint8_t *p, uint32_t size) 

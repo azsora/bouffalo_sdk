@@ -90,7 +90,7 @@ static uint32_t get_rgb(uint32_t x, uint8_t a)
             break;
     }
 
-    return ((r >> (a + 16)) | (g >> (a + 8)) | (b >> a));
+    return ((r >> a) << 16) | ((g >> a) << 8) | (b >> a);
 }
 static void data_update(void)
 {

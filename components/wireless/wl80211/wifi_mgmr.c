@@ -28,6 +28,36 @@ static uint16_t wifi_mgmr_listen_itv = 0;
 
 static void auth_cipher_convert(struct wl80211_scan_result_item *result, uint8_t *auth, uint8_t *cipher);
 
+#if defined(CONFIG_WL80211_P2P)
+static struct {
+    scan_complete_cb_t cb;
+    void *data;
+} wifi_mgmr_scan_ctx;
+
+static bool wifi_mgmr_should_suppress_scan_dump(void)
+{
+#if defined(CONFIG_BL_SUPPLICANT_WPS) || defined(CONFIG_WL80211_P2P)
+    wps_status_t status = wl80211_supplicant_get_wps_status_internal();
+
+    if (status == WPS_STATUS_SCANNING || status == WPS_STATUS_PENDING) {
+        return true;
+    }
+#endif
+
+    if (wl80211_glb.p2p.role != WL80211_P2P_ROLE_IDLE ||
+        wl80211_glb.p2p.group_forming || wl80211_glb.p2p.roc_active) {
+        return true;
+    }
+
+    return false;
+}
+
+static const uint8_t *wifi_mgmr_get_optional_appie(wifi_appie_t type, uint16_t *ie_len)
+{
+    return wl80211_supplicant_get_appie_internal(true, type, ie_len);
+}
+#endif
+
 #if !defined(__NuttX__)
 #define WIFI_MGMR_AP_DHCPD_DEFAULT_START (-1)
 #define WIFI_MGMR_AP_DHCPD_DEFAULT_LIMIT (-1)
@@ -66,6 +96,31 @@ static void wifi_mgmr_ap_netif_cfg_clear(void)
     memset(&wifi_mgmr_ap_netif_cfg, 0, sizeof(wifi_mgmr_ap_netif_cfg));
     wifi_mgmr_ap_netif_cfg_set_defaults(&wifi_mgmr_ap_netif_cfg);
 }
+
+#if defined(CONFIG_WL80211_P2P)
+void wifi_mgmr_ap_netif_cfg_override(bool use_ipcfg, bool use_dhcpd, int start, int limit,
+                                     uint32_t ap_ipaddr, uint32_t ap_mask)
+{
+    wifi_mgmr_ap_netif_cfg.pending = true;
+    wifi_mgmr_ap_netif_cfg.use_ipcfg = use_ipcfg;
+    wifi_mgmr_ap_netif_cfg.use_dhcpd = use_ipcfg && use_dhcpd;
+    wifi_mgmr_ap_netif_cfg.ap_ipaddr = ap_ipaddr;
+    wifi_mgmr_ap_netif_cfg.ap_mask = ap_mask;
+
+    if (wifi_mgmr_ap_netif_cfg.use_dhcpd && (start <= 0 || limit <= 0)) {
+        wifi_mgmr_ap_netif_cfg.start = WIFI_MGMR_AP_DHCPD_DEFAULT_START;
+        wifi_mgmr_ap_netif_cfg.limit = WIFI_MGMR_AP_DHCPD_DEFAULT_LIMIT;
+    } else {
+        wifi_mgmr_ap_netif_cfg.start = start;
+        wifi_mgmr_ap_netif_cfg.limit = limit;
+    }
+}
+
+void wifi_mgmr_ap_netif_cfg_reset(void)
+{
+    wifi_mgmr_ap_netif_cfg_clear();
+}
+#endif
 
 static void wifi_mgmr_ap_netif_cfg_save(const wifi_mgmr_ap_params_t *config)
 {
@@ -133,9 +188,23 @@ static void auto_powersave(struct timeout_s *timeout)
 
 static void connected_tsk(void)
 {
-    _wifi_mgmr_sta_link_up(wifi_mgmr_glb.use_dhcp);
+    int use_dhcp = wifi_mgmr_glb.use_dhcp;
 
-    if (wifi_mgmr_glb.use_dhcp) {
+#if defined(CONFIG_WL80211_P2P)
+    /*
+     * P2P client path enters via WPS/wpa_sta_connect rather than
+     * wifi_mgmr_sta_connect(), so wifi_mgmr_glb.use_dhcp may be 0.
+     * A P2P client always needs a DHCP client to obtain its IP from
+     * the GO's dhcpd, so force-enable DHCP for the CLIENT role.
+     */
+    if (wl80211_glb.p2p.role == WL80211_P2P_ROLE_CLIENT) {
+        use_dhcp = 1;
+    }
+#endif
+
+    _wifi_mgmr_sta_link_up(use_dhcp);
+
+    if (use_dhcp) {
         dhcp_ip_timeout = timeout_start_new(dhcp_ip_timeout_cb, NULL, 15000);
     }
 
@@ -184,6 +253,12 @@ static void dump_scan_result(void)
     int i = 0;
     uint8_t auth, cipher;
     int total = 0;
+
+#if defined(CONFIG_WL80211_P2P)
+    if (wifi_mgmr_should_suppress_scan_dump()) {
+        return;
+    }
+#endif
 
     /* count APs */
     RB_FOREACH(n, _scan_result_tree, &wl80211_scan_result)
@@ -245,9 +320,25 @@ static void wl80211_event_handler(async_input_event_t ev, void *priv)
             break;
 
         case WL80211_EVT_SCAN_DONE:
+#if defined(CONFIG_WL80211_P2P)
+        {
+            scan_complete_cb_t scan_cb = wifi_mgmr_scan_ctx.cb;
+            void *scan_data = wifi_mgmr_scan_ctx.data;
+
+            wifi_mgmr_scan_ctx.cb = NULL;
+            wifi_mgmr_scan_ctx.data = NULL;
+            async_post_event(EV_WIFI, CODE_WIFI_ON_SCAN_DONE, 0);
+            if (scan_cb != NULL) {
+                scan_cb(scan_data, NULL);
+            }
+            handler = dump_scan_result;
+            break;
+        }
+#else
             async_post_event(EV_WIFI, CODE_WIFI_ON_SCAN_DONE, 0);
             handler = dump_scan_result;
             break;
+#endif
 
         case WL80211_EVT_STA_DISCONNECTED:
             connect_ind_dump((ev->value >> 16) & 0xFF, ev->value & 0xFF);
@@ -291,6 +382,12 @@ static void wifi_mgmr_event_handler(async_input_event_t ev, void *priv)
         } break;
         case CODE_WIFI_ON_SCAN_DONE: {
             wl80211_printf("[APP] [EVT] %s, CODE_WIFI_ON_SCAN_DONE\r\n", __func__);
+#if defined(CONFIG_WL80211_P2P)
+            if (wifi_mgmr_should_suppress_scan_dump()) {
+                break;
+            }
+#endif
+
             wifi_mgmr_sta_scanlist();
         } break;
         case CODE_WIFI_ON_CONNECTED: {
@@ -556,6 +653,9 @@ int wifi_mgmr_sta_scan(const wifi_mgmr_scan_params_t *config)
     struct wl80211_scan_params scan_params;
     memset(&scan_params, 0, sizeof(struct wl80211_scan_params));
 
+#if defined(CONFIG_WL80211_P2P)
+    if (config != NULL) {
+#endif
     scan_params.ssid_len = config->ssid_length;
     if (config->ssid_length) {
         scan_params.ssid = config->ssid_array;
@@ -574,6 +674,18 @@ int wifi_mgmr_sta_scan(const wifi_mgmr_scan_params_t *config)
     if (config->passive) {
         scan_params.flags |= WL80211_SCAN_FLAGS_PASSIVE;
     }
+#if defined(CONFIG_WL80211_P2P)
+    }
+
+    {
+        uint16_t ie_len = 0;
+        const uint8_t *ie = wifi_mgmr_get_optional_appie(WIFI_APPIE_WPS_PR, &ie_len);
+        if (ie != NULL && ie_len != 0) {
+            scan_params.ie = ie;
+            scan_params.ie_len = ie_len;
+        }
+    }
+#endif
 
     return wl80211_scan(&scan_params);
 }
@@ -714,6 +826,16 @@ int wifi_mgmr_sta_scanlist_free(void)
         if (n->ssid) {
             free((void *)n->ssid);
         }
+#if defined(CONFIG_WL80211_P2P)
+        if (n->raw_frame) {
+            free(n->raw_frame);
+        }
+#endif
+#if defined(CONFIG_WL80211_P2P)
+        if (n->p2p_ie) {
+            free(n->p2p_ie);
+        }
+#endif
         free(n);
     }
 
@@ -739,6 +861,7 @@ int wifi_mgmr_sta_connect(const wifi_mgmr_sta_connect_params_t *config)
 {
     int ret;
     struct wl80211_connect_params params;
+    uint8_t bssid_addr[6] = { 0 };
 
     memset(&params, 0, sizeof(struct wl80211_connect_params));
 
@@ -758,7 +881,6 @@ int wifi_mgmr_sta_connect(const wifi_mgmr_sta_connect_params_t *config)
     memcpy(params.password, config->key, 64);
 
     /* bssid */
-    uint8_t bssid_addr[6] = { 0 };
     if (strlen(config->bssid_str)) {
         ret = wifi_mgmr_mac_str_to_addr(config->bssid_str, bssid_addr);
         if (ret) {
@@ -773,6 +895,16 @@ int wifi_mgmr_sta_connect(const wifi_mgmr_sta_connect_params_t *config)
     rtos_lock();
     wifi_mgmr_glb.use_dhcp = config->use_dhcp;
     rtos_unlock();
+#if defined(CONFIG_WL80211_P2P)
+    {
+        uint16_t ie_len = 0;
+        const uint8_t *ie = wifi_mgmr_get_optional_appie(WIFI_APPIE_WPS_AR, &ie_len);
+        if (ie != NULL && ie_len != 0) {
+            params.ie = ie;
+            params.ie_len = ie_len;
+        }
+    }
+#endif
 
     /* start scan and connect */
     ret = wl80211_sta_connect(&params);
@@ -800,6 +932,135 @@ uint16_t wifi_mgmr_sta_get_listen_itv(void)
     return wifi_mgmr_listen_itv;
 }
 
+
+#if defined(CONFIG_WL80211_P2P)
+wifi_interface_t wifi_mgmr_sta_enable(void)
+{
+    return &wifi_mgmr_glb;
+}
+
+int wifi_mgmr_sta_disable(wifi_interface_t *interface)
+{
+    (void)interface;
+    return 0;
+}
+
+int wifi_mgmr_sta_connect_ext(wifi_interface_t *wifi_interface, char *ssid, char *passphr,
+                              const ap_connect_adv_t *conn_adv_param)
+{
+    struct wl80211_connect_params params;
+    size_t ssid_len;
+    size_t passphr_len = 0;
+
+    (void)wifi_interface;
+    if (ssid == NULL || conn_adv_param == NULL) {
+        return -1;
+    }
+
+    ssid_len = strlen(ssid);
+    if (ssid_len == 0 || ssid_len > MGMR_SSID_LEN) {
+        return -1;
+    }
+
+    if (passphr != NULL) {
+        passphr_len = strlen(passphr);
+        if ((passphr_len < 8 && passphr_len != 5) || passphr_len > 63) {
+            return -1;
+        }
+    }
+
+    if (conn_adv_param->psk != NULL && strlen(conn_adv_param->psk) != 64) {
+        return -1;
+    }
+
+    memset(&params, 0, sizeof(params));
+    memcpy(params.ssid, ssid, ssid_len);
+    if (passphr != NULL) {
+        strlcpy((char *)params.password, passphr, sizeof(params.password));
+    } else if (conn_adv_param->psk != NULL) {
+        strlcpy((char *)params.password, conn_adv_param->psk, sizeof(params.password));
+    }
+
+    if (conn_adv_param->ap_info.bssid != NULL) {
+        memcpy(params.bssid, conn_adv_param->ap_info.bssid, sizeof(params.bssid));
+    }
+    if (conn_adv_param->ap_info.freq != 0) {
+        params.channel = wl80211_freq_to_channel(conn_adv_param->ap_info.freq);
+        if (params.channel == (uint8_t)-1) {
+            params.channel = 0;
+        }
+    }
+
+    if (conn_adv_param->flags & WIFI_CONNECT_PMF_REQUIRED) {
+        params.mfp = WL80211_MFP_REQUIRED;
+    } else if (conn_adv_param->flags & WIFI_CONNECT_PMF_CAPABLE) {
+        params.mfp = WL80211_MFP_OPTIONAL;
+    }
+    params.listen_interval = wifi_mgmr_listen_itv;
+    params.flags = conn_adv_param->flags;
+
+    {
+        uint16_t ie_len = 0;
+        const uint8_t *ie = wifi_mgmr_get_optional_appie(WIFI_APPIE_WPS_AR, &ie_len);
+        if (ie != NULL && ie_len != 0) {
+            params.ie = ie;
+            params.ie_len = ie_len;
+        }
+    }
+
+    return wl80211_sta_connect(&params);
+}
+
+int wifi_mgmr_state_get(int *state)
+{
+    if (state == NULL) {
+        return -1;
+    }
+
+    if (wl80211_glb.monitor_en) {
+        *state = WIFI_STATE_SNIFFER;
+    } else if (wl80211_glb.ap_en) {
+        if (wl80211_glb.link_up) {
+            *state = WIFI_STATE_WITH_AP_CONNECTED_IP_GETTING;
+        } else if (wl80211_glb.connecting || wl80211_glb.associated) {
+            *state = WIFI_STATE_WITH_AP_CONNECTING;
+        } else if (wl80211_glb.status_code || wl80211_glb.reason_code) {
+            *state = WIFI_STATE_WITH_AP_DISCONNECT;
+        } else {
+            *state = WIFI_STATE_WITH_AP_IDLE;
+        }
+    } else if (wl80211_glb.link_up) {
+        *state = WIFI_STATE_CONNECTED_IP_GETTING;
+    } else if (wl80211_glb.connecting || wl80211_glb.associated) {
+        *state = WIFI_STATE_CONNECTING;
+    } else if (wl80211_glb.status_code || wl80211_glb.reason_code) {
+        *state = WIFI_STATE_DISCONNECT;
+    } else {
+        *state = WIFI_STATE_IDLE;
+    }
+
+    return 0;
+}
+
+int wifi_mgmr_scan(void *data, scan_complete_cb_t cb)
+{
+    wifi_mgmr_scan_params_t scan_params;
+    int ret;
+
+    memset(&scan_params, 0, sizeof(scan_params));
+    wifi_mgmr_scan_ctx.cb = cb;
+    wifi_mgmr_scan_ctx.data = data;
+
+    ret = wifi_mgmr_sta_scan(&scan_params);
+    if (ret != 0) {
+        wifi_mgmr_scan_ctx.cb = NULL;
+        wifi_mgmr_scan_ctx.data = NULL;
+    }
+
+    return ret;
+}
+#endif
+
 int wifi_mgmr_ap_state_get(void)
 {
     return -1;
@@ -820,7 +1081,6 @@ int wifi_mgmr_sta_autoconnect_enable(void)
     rtos_lock();
     wifi_mgmr_glb.autoconnect = 1;
     rtos_unlock();
-    wl80211_printf("Enable Auto Reconnect\r\n");
     return 0;
 }
 
@@ -830,7 +1090,6 @@ int wifi_mgmr_sta_autoconnect_disable(void)
     wifi_mgmr_glb.autoconnect = 0;
     rtos_unlock();
 
-    wl80211_printf("Disable Auto Reconnect\r\n");
     return 0;
 }
 
@@ -1087,7 +1346,11 @@ int wifi_mgmr_ap_start(const wifi_mgmr_ap_params_t *config)
 
     if (wl80211_ap_start(&ap_setting) != 0) {
 #if !defined(__NuttX__)
+#if defined(CONFIG_WL80211_P2P)
+        wifi_mgmr_ap_netif_cfg_reset();
+#else
         wifi_mgmr_ap_netif_cfg_clear();
+#endif
 #endif
         wl80211_printf("Error: Failed to start AP\r\n");
         return -1;

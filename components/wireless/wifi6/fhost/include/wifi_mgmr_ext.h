@@ -1062,11 +1062,19 @@ int wifi_mgmr_sta_ps_exit(void);
 
 int wifi_mgmr_sta_ps_active_time(uint32_t ms);
 
+/** Public fixed coexistence configurations. Keep values aligned with MACSW. */
+typedef enum {
+    WIFI_COEX_CONFIG_COMBO = 0,
+    WIFI_COEX_CONFIG_STANDALONE_DUAL_ANT = 1,
+    WIFI_COEX_CONFIG_STANDALONE_SPDT = 2,
+} wifi_coex_config_t;
+
 /**
  * @brief Enable WiFi/BLE coexistence mode
  *
- * This function enables time-division multiplexing between WiFi and BLE.
- * WiFi must be connected before calling this function.
+ * WiFi must be connected before calling this function. BL616/BL616CL enable
+ * combo PS_PTA. BL618DG on 5 GHz applies the standalone dual-antenna hardware
+ * recipe without enabling PS_PTA.
  *
  * @return 0 on success, negative error code on failure
  *         -1: WiFi not ready
@@ -1074,6 +1082,26 @@ int wifi_mgmr_sta_ps_active_time(uint32_t ms);
  *         -3: Command failed
  */
 int wifi_mgmr_sta_coex_enable(void);
+
+/**
+ * @brief Apply coexistence configuration for an enabled SoftAP.
+ *
+ * The current public AP flow supports the BL618DG 5 GHz standalone
+ * dual-antenna hardware recipe only. It does not enable PS_PTA.
+ *
+ * @return 0 on success, -1 on failure.
+ */
+int wifi_mgmr_ap_coex_enable(void);
+
+/**
+ * @brief Enable BL618DG 2.4 GHz coexistence with an explicit configuration.
+ *
+ * @param config COEX combo or standalone SPDT configuration.
+ * @param ps_pta_enable Enable the software TBTT/PS_PTA runtime.
+ * @return 0 on success, -1 on failure.
+ */
+int wifi_mgmr_sta_coex_enable_2g(wifi_coex_config_t config,
+                                 bool ps_pta_enable);
 
 /**
  * @brief Disable WiFi/BLE coexistence mode
@@ -1613,6 +1641,8 @@ void wifi_mgmr_coex_enable(bool en);
 /**
  * wifi_sta_ipv6_enable
  * Enable or disable ipv6
+ *
+ * @return 0 on success, otherwise a negative lwIP err_t value.
  */
 #ifdef CFG_IPV6
 int wifi_sta_ipv6_enable(int enable);

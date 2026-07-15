@@ -1,5 +1,10 @@
 sdk_generate_library()
 
+# Suppress -Waddress warning: lwIP macros compare struct member addresses
+# against NULL (e.g., ip4_addr_debug_print, ip6_addr_debug_print, ip_addr_isany),
+# which GCC -Waddress flags as "always true" and -Werror turns into an error.
+sdk_add_private_compile_options(-Wno-address)
+
 if (CONFIG_OTBR)
   sdk_add_compile_definitions(OPENTHREAD_BORDER_ROUTER)
 endif()

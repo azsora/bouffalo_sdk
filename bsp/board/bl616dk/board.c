@@ -452,7 +452,9 @@ void board_init(void)
     ram_heap_init();
 
     /* boot info dump */
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
     /* version info dump */
     bl_show_component_version();
 

@@ -1249,8 +1249,6 @@ static void hci_disconn_complete(struct net_buf *buf)
 	}
 #endif /* defined(CONFIG_BT_CENTRAL) && !defined(CONFIG_BT_WHITELIST) */
 
-	bt_conn_unref(conn);
-
 #if defined(BFLB_RELEASE_CMD_SEM_IF_CONN_DISC)
 	hci_release_conn_related_cmd();
 #endif
@@ -1258,6 +1256,8 @@ static void hci_disconn_complete(struct net_buf *buf)
 #if defined(BFLB_BLE)
 	notify_disconnected(conn);
 #endif
+
+	bt_conn_unref(conn);
 
 #if defined(CONFIG_BLE_RECONNECT_TEST)
 	if (conn->role == BT_CONN_ROLE_MASTER) {
@@ -1512,6 +1512,16 @@ static struct bt_conn *find_pending_connect(bt_addr_le_t *peer_addr)
 	return bt_conn_lookup_state_le(peer_addr, BT_CONN_CONNECT_DIR_ADV);
 }
 
+#if defined(BFLB_BLE_PATCH_SELECT_CONN_BY_ROLE)
+static struct bt_conn *find_pending_connect_with_role(bt_addr_le_t *peer_addr, uint8_t role)
+{
+	if(role == BT_HCI_ROLE_MASTER){
+		return bt_conn_lookup_state_le(peer_addr, BT_CONN_CONNECT);
+	}
+	return bt_conn_lookup_state_le(peer_addr, BT_CONN_CONNECT_DIR_ADV);
+}
+#endif
+
 static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 {
 	u16_t handle = sys_le16_to_cpu(evt->handle);
@@ -1558,10 +1568,14 @@ static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 		}
 
 		if (IS_ENABLED(CONFIG_BT_CENTRAL)) {
+			#if defined(BFLB_BLE_PATCH_HANDLE_EXISTED_CONN_ERROR_CODE)
+			if (conn->err == BT_HCI_ERR_UNKNOWN_CONN_ID || conn->err == BT_HCI_ERR_CONN_ALREADY_EXISTS){
+			#else
 			/*
 			 * Handle cancellation of outgoing connection attempt.
 			 */
 			if (conn->err == BT_HCI_ERR_UNKNOWN_CONN_ID) {
+			#endif
 				/* We notify before checking autoconnect flag
 				 * as application may choose to change it from
 				 * callback.
@@ -1599,7 +1613,11 @@ static void enh_conn_complete(struct bt_hci_evt_le_enh_conn_complete *evt)
 		bt_addr_le_copy(&peer_addr, &evt->peer_addr);
 	}
 
+	#if defined(BFLB_BLE_PATCH_SELECT_CONN_BY_ROLE)
+	conn = find_pending_connect_with_role(&id_addr, evt->role);
+	#else
 	conn = find_pending_connect(&id_addr);
+	#endif
 
 	if (IS_ENABLED(CONFIG_BT_PERIPHERAL) &&
 	    evt->role == BT_HCI_ROLE_SLAVE) {

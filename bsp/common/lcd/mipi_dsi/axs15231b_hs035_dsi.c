@@ -28,12 +28,12 @@ static const mipi_dsi_v2_timing_t axs15231b_hs035_timing = {
     .data_type  = BFLB_DSI_DATA_RGB565,
     .reset_pin  = GPIO_PIN_2,
 
-    .pll_cfg         = &dsipllCfg_850M[GLB_XTAL_40M],
+    .pll_cfg         = &dsipllCfg_400M[GLB_XTAL_40M],
     .esc_clk_sel     = 0,
     .esc_clk_div     = 0,
     .display_clk_sel = GLB_DP_CLK_WIFIPLL_160M,
     .display_clk_div = 10, // 14.5Mhz 60fps
-    .dsi_hs_clock    = 850 * 1000 * 1000,
+    .dsi_hs_clock    = 400 * 1000 * 1000,
 
     .dphy = {
         .time_clk_exit     = 5,

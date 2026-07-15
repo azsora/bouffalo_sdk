@@ -21,6 +21,7 @@ struct bflb_auadc_init_config_s auadc_init_cfg = {
 };
 
 /* audio adc analog config */
+#ifndef CONFIG_AUDIO_MIC_PDM_MODE
 struct bflb_auadc_adc_init_config_s auadc_analog_init_cfg = {
     .auadc_analog_en = true,
     .adc_mode = AUADC_ADC_MODE_AUDIO,
@@ -29,6 +30,7 @@ struct bflb_auadc_adc_init_config_s auadc_analog_init_cfg = {
     .adc_pga_nega_ch = AUADC_ADC_ANALOG_CH_7,
     .adc_pga_gain = 30,
 };
+#endif
 
 struct bflb_device_s *auadc_hd;
 struct bflb_device_s *auadc_dma_hd;
@@ -44,7 +46,9 @@ void auadc_init(void)
     /* auadc init */
     auadc_hd = bflb_device_get_by_name("auadc");
     bflb_auadc_init(auadc_hd, &auadc_init_cfg);
+#ifndef CONFIG_AUDIO_MIC_PDM_MODE
     bflb_auadc_adc_init(auadc_hd, &auadc_analog_init_cfg);
+#endif
     /* set volume */
     bflb_auadc_feature_control(auadc_hd, AUADC_CMD_SET_VOLUME_VAL, (size_t)(0));
     /* auadc enable dma */

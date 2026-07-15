@@ -138,8 +138,9 @@ int async_register_event_filter(uintptr_t type, async_event_cb cb, void *priv)
 int async_unregister_event_filter(uintptr_t type, async_event_cb cb, void *priv)
 {
     struct filter_list_node *fn, *fn_tmp;
+    int ret = -1;
 
-    assert(cb == NULL);
+    assert(cb != NULL);
 
     async_rtos_lock();
     SLIST_FOREACH_SAFE(fn, &filters, node, fn_tmp)
@@ -157,9 +158,10 @@ int async_unregister_event_filter(uintptr_t type, async_event_cb cb, void *priv)
         }
 
         fn->type_filter = EV_DELETE;
+        ret = 0;
         break;
     }
     async_rtos_unlock();
 
-    return -1;
+    return ret;
 }

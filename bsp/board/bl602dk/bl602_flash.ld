@@ -104,12 +104,12 @@ SECTIONS
         *(EXCLUDE_FILE( *bl602_glb*.o* \
                         *bl602_pds*.o* \
                         *bl602_common*.o* \
-                        *bl602_sf_cfg*.o* \
+                        *bflb_sf_cfg*.o* \
                         *bl602_sf_cfg_ext*.o* \
-                        *bl602_sf_ctrl*.o* \
-                        *bl602_sflash*.o* \
+                        *bflb_sf_ctrl*.o* \
+                        *bflb_sflash*.o* \
                         *bl602_sflash_ext*.o* \
-                        *bl602_xip_sflash*.o* \
+                        *bflb_xip_sflash*.o* \
                         *bl602_xip_sflash_ext*.o* \
                         *bl602_ef_ctrl*.o*) .rodata*)
         *(.rodata)
@@ -169,12 +169,12 @@ SECTIONS
         *bl602_glb*.o*(.rodata*)
         *bl602_pds*.o*(.rodata*)
         *bl602_common*.o*(.rodata*)
-        *bl602_sf_cfg*.o*(.rodata*)
+        *bflb_sf_cfg*.o*(.rodata*)
         *bl602_sf_cfg_ext*.o*(.rodata*)
-        *bl602_sf_ctrl*.o*(.rodata*)
-        *bl602_sflash*.o*(.rodata*)
+        *bflb_sf_ctrl*.o*(.rodata*)
+        *bflb_sflash*.o*(.rodata*)
         *bl602_sflash_ext*.o*(.rodata*)
-        *bl602_xip_sflash*.o*(.rodata*)
+        *bflb_xip_sflash*.o*(.rodata*)
         *bl602_xip_sflash_ext*.o*(.rodata*)
         *bl602_ef_ctrl*.o*(.rodata*)
 

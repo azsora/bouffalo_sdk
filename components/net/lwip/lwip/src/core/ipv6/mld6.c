@@ -66,6 +66,10 @@
 #include "lwip/netif.h"
 #include "lwip/memp.h"
 #include "lwip/stats.h"
+#include "lwip/timeouts.h"
+#if IPV6_TIMER_PRECISE_NEEDED
+#include "lwip/priv/ipv6_timer_priv.h"
+#endif
 
 #include <string.h>
 
@@ -113,6 +117,9 @@ mld6_stop(struct netif *netif)
     /* move to "next" */
     group = next;
   }
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+  ipv6_timer_needed(mld6_tmr);
+#endif
   return ERR_OK;
 }
 
@@ -131,6 +138,29 @@ mld6_report_groups(struct netif *netif)
     group = group->next;
   }
 }
+
+#if LWIP_IPV6_LP_REACHABILITY_REFRESH
+void
+mld6_report_groups_now(struct netif *netif)
+{
+  struct mld_group *group = netif_mld6_data(netif);
+
+  while (group != NULL) {
+    group->timer = 0;
+#if IPV6_TIMER_PRECISE_NEEDED
+    group->timer_deadline_ms = 0;
+#endif
+    group->group_state = MLD6_GROUP_IDLE_MEMBER;
+    MLD6_STATS_INC(mld6.tx_report);
+    mld6_send(netif, group, ICMP6_TYPE_MLR);
+    group = group->next;
+  }
+
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+  ipv6_timer_needed(mld6_tmr);
+#endif
+}
+#endif /* LWIP_IPV6_LP_REACHABILITY_REFRESH */
 
 /**
  * Search for a group that is joined on a netif
@@ -173,6 +203,9 @@ mld6_new_group(struct netif *ifp, const ip6_addr_t *addr)
   if (group != NULL) {
     ip6_addr_set(&(group->group_address), addr);
     group->timer              = 0; /* Not running */
+#if IPV6_TIMER_PRECISE_NEEDED
+    group->timer_deadline_ms  = 0;
+#endif
     group->group_state        = MLD6_GROUP_IDLE_MEMBER;
     group->last_reporter_flag = 0;
     group->use                = 0;
@@ -279,8 +312,14 @@ mld6_input(struct pbuf *p, struct netif *inp)
       /* If we are waiting to report, cancel it. */
       if (group->group_state == MLD6_GROUP_DELAYING_MEMBER) {
         group->timer = 0; /* stopped */
+#if IPV6_TIMER_PRECISE_NEEDED
+        group->timer_deadline_ms = 0;
+#endif
         group->group_state = MLD6_GROUP_IDLE_MEMBER;
         group->last_reporter_flag = 0;
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+        ipv6_timer_needed(mld6_tmr);
+#endif
       }
     }
     break; /* ICMP6_TYPE_MLR */
@@ -477,6 +516,10 @@ mld6_leavegroup_netif(struct netif *netif, const ip6_addr_t *groupaddr)
       group->use--;
     }
 
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+    ipv6_timer_needed(mld6_tmr);
+#endif
+
     /* Left group */
     return ERR_OK;
   }
@@ -495,14 +538,23 @@ void
 mld6_tmr(void)
 {
   struct netif *netif;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t now = sys_now();
+#endif
 
   NETIF_FOREACH(netif) {
     struct mld_group *group = netif_mld6_data(netif);
 
     while (group != NULL) {
       if (group->timer > 0) {
+#if IPV6_TIMER_PRECISE_NEEDED
+        if (lwip_ipv6_timer_deadline_due(group->timer_deadline_ms, now)) {
+          group->timer = 0;
+          group->timer_deadline_ms = 0;
+#else
         group->timer--;
         if (group->timer == 0) {
+#endif
           /* If the state is MLD6_GROUP_DELAYING_MEMBER then we send a report for this group */
           if (group->group_state == MLD6_GROUP_DELAYING_MEMBER) {
             MLD6_STATS_INC(mld6.tx_report);
@@ -515,6 +567,30 @@ mld6_tmr(void)
     }
   }
 }
+
+#if IPV6_TIMER_PRECISE_NEEDED
+u32_t
+mld6_tmr_sleeptime(void)
+{
+  struct netif *netif;
+  u32_t min_wake = SYS_TIMEOUTS_SLEEPTIME_INFINITE;
+  u32_t now = sys_now();
+
+  NETIF_FOREACH(netif) {
+    struct mld_group *group = netif_mld6_data(netif);
+
+    while (group != NULL) {
+      if (group->timer > 0) {
+        min_wake = LWIP_MIN(min_wake,
+            lwip_ipv6_timer_deadline_sleeptime(group->timer_deadline_ms, now));
+      }
+      group = group->next;
+    }
+  }
+
+  return min_wake;
+}
+#endif
 
 /**
  * Schedule a delayed membership report for a group
@@ -545,8 +621,15 @@ mld6_delayed_report(struct mld_group *group, u16_t maxresp_in)
      ((group->group_state == MLD6_GROUP_DELAYING_MEMBER) &&
       ((group->timer == 0) || (maxresp < group->timer)))) {
     group->timer = maxresp;
+#if IPV6_TIMER_PRECISE_NEEDED
+    group->timer_deadline_ms = lwip_ipv6_timer_deadline_from_ms(
+        (u32_t)maxresp * MLD6_TMR_INTERVAL);
+#endif
     group->group_state = MLD6_GROUP_DELAYING_MEMBER;
   }
+#if LWIP_TIMERS && IPV6_TIMER_PRECISE_NEEDED
+  ipv6_timer_needed(mld6_tmr);
+#endif
 }
 
 /**

@@ -13,8 +13,8 @@
 #include <string.h>
 #include <stdbool.h>
 #include <FreeRTOS.h>
-#include <task.h>
 #include <semphr.h>
+#include <task.h>
 
 #include "at_main.h"
 #include "at_core.h"
@@ -31,7 +31,6 @@
 #include "bl_sys.h"
 #include "at_ota.h"
 #include "at_through.h"
-#include "bflb_adc.h"
 #include "at_fs.h"
 #include "at_wifi/at_wifi_main.h"
 #include <sys/fcntl.h>
@@ -70,7 +69,6 @@ static int at_exe_cmd_rst(int argc, const char **argv)
         if (at->function_ops[i].stop_func)
             at->function_ops[i].stop_func();
     }
-
     vTaskDelay(pdMS_TO_TICKS(100));
     bl_sys_reset_por();
     return AT_RESULT_CODE_OK;
@@ -132,7 +130,6 @@ static int at_query_cmd_cmd(int argc, const char **argv)
     for (i = 0, n = 0; i < at->num_commands; i++) {
         cmds = at->commands[i];
         while (cmds->at_name) {
-            //t = at->commands[i]->at_test_cmd ? 1 : 0;
             t = 0;
             q = cmds->at_query_cmd ? 1 : 0;
             s = cmds->at_setup_cmd ? 1 : 0;
@@ -385,7 +382,7 @@ static int at_query_temp(int argc, const char **argv)
         average_filter += bflb_adc_tsen_get_temp(adc);
     }
     average_filter = average_filter / AVERAGE_COUNT;
-    printf("temp = %f\r\n", average_filter);
+    AT_CMD_PRINTF("temp = %f\r\n", average_filter);
 
     at_response_string("+TEMP:%f\r\n", average_filter);
 
@@ -1445,7 +1442,7 @@ static int at_query_vbat(int argc, const char **argv)
     return AT_RESULT_CODE_OK;
 }
 
-static at_base_adc_tsen_init(void)
+static void at_base_adc_tsen_init(void)
 {
     struct bflb_device_s *adc;
 
@@ -1527,12 +1524,18 @@ static const at_cmd_struct at_base_cmd[] = {
 #ifdef CONFIG_ATMODULE_MINIDUMP
     {"+MINIDUMP",       NULL, NULL, at_minidump, 0, 0},
 #endif
-    {NULL,              NULL, NULL, NULL, 0, 0},
+    {NULL, NULL, NULL, NULL, 0, 0},
 };
 
 bool at_base_cmd_regist(void)
 {
     at_base_config_init();
+
+    at_port_para_set(at_base_config->uart_cfg.baudrate,
+            at_base_config->uart_cfg.databits,
+            at_base_config->uart_cfg.stopbits,
+            at_base_config->uart_cfg.parity,
+            at_base_config->uart_cfg.flow_control);
 
 #ifdef CONFIG_ATMODULE_CHIP_VBAT
     at_base_adc_tsen_init();

@@ -37,6 +37,10 @@ extern int bredr_cli_register(void);
 #include "easyflash.h"
 #endif
 
+#if defined(CONFIG_BLE_TP_SERVER)
+#include "ble_tp_svc.h"
+#endif
+
 static struct bflb_device_s *uart0;
 
 extern void shell_init_with_task(struct bflb_device_s *shell);
@@ -82,7 +86,18 @@ void bt_enable_cb(int err)
                bt_addr.a.val[5], bt_addr.a.val[4], bt_addr.a.val[3], bt_addr.a.val[2], bt_addr.a.val[1], bt_addr.a.val[0]);
         bt_conn_cb_register(&ble_conn_callbacks);
         ble_cli_register();
+
+        #if defined(CONFIG_BLE_TP_SERVER)
+        ble_tp_init();
+        #endif
+
+        #if defined(CONFIG_BT_TP_CLI)
+        extern int ble_tp_cli_register(void);
+        ble_tp_cli_register();
+        #endif
+
         #if defined(CONFIG_BT_BREDR)
+        extern int bredr_cli_register(void);
         bredr_cli_register();
         #endif
     }
@@ -124,6 +139,18 @@ int main(void)
         printf("PHY RF init failed!\r\n");
         return 0;
     }
+
+    #if defined(BL618DG)
+    #if defined(CONFIG_BTBLE_USE_STANDALONE_PATH)
+    printf("cmd_set_btble_standalone\r\n");
+    extern void cmd_set_btble_standalone(int argc, char **argv);
+    cmd_set_btble_standalone(0, 0);
+    #else
+    printf("cmd_set_btble_combo\r\n");
+    extern void cmd_set_btble_combo(int argc, char **argv);
+    cmd_set_btble_combo(0, 0);
+    #endif
+    #endif
 
     xTaskCreate(app_start_task, (char *)"app_start", 1024, NULL, configMAX_PRIORITIES - 2, &app_start_handle);
 

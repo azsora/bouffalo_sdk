@@ -18,11 +18,14 @@ sdk_add_include_directories(${LVGL_DEMO_DIR})
 # (no folder prefix), resolved via the include dir added below, so it never
 # needs to know which resolution is active.
 #
-# DPI standard (800x480) has no matching SquareLine UI, so it builds NO UICODE
-# folder and main.c runs a built-in LVGL demo instead (guarded by LCD_INTERFACE_TYPE).
+# DPI standard (800x480) uses UICODE800, a native-landscape SquareLine UI (no
+# 270-degree rotation, unlike the portrait DSI panels).
+set(UI_DIR_172 ${LVGL_DEMO_DIR}/UICODE172)
 set(UI_DIR_480 ${LVGL_DEMO_DIR}/UICODE480)
 set(UI_DIR_720 ${LVGL_DEMO_DIR}/UICODE720)
-list(FILTER lvgl_demo_sources EXCLUDE REGEX "/UICODE480/|/UICODE720/")
+set(UI_DIR_800 ${LVGL_DEMO_DIR}/UICODE800)
+set(UI_DIR_854 ${LVGL_DEMO_DIR}/UICODE854)
+list(FILTER lvgl_demo_sources EXCLUDE REGEX "/UICODE172/|/UICODE480/|/UICODE720/|/UICODE800/|/UICODE854/")
 
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/lcd_conf_user.h _lcd_conf)
 # DPI panels mux SDH DAT2/DAT3 (IO43/44) onto the panel's R7/R6, so the SD card
@@ -34,11 +37,13 @@ if(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DPI_")
 endif()
 # match an ACTIVE (non-commented) panel define
 if(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DPI_STANDARD")
-    set(UI_DIR "") # DPI: built-in demo (lv_demo_benchmark), no SquareLine UI
+    set(UI_DIR ${UI_DIR_800}) # standard 800x480 DPI, native-landscape SquareLine UI
 elseif(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DPI_JD9165BA")
     set(UI_DIR "") # 1024x600 DPI: no matching SquareLine UI, run built-in benchmark
 elseif(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DSI_AXS15231B_HS035")
-    set(UI_DIR "") # 172x640 DSI: no matching SquareLine UI, run built-in benchmark
+    set(UI_DIR ${UI_DIR_172}) # AXS15231B 172x640 DSI
+elseif(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DSI_ILI9806E_KD050FWFIA019")
+    set(UI_DIR ${UI_DIR_854}) # KD050FWFIA019 480x854 (ILI9806E)
 elseif(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DSI_ILI9881C_")
     set(UI_DIR ${UI_DIR_720}) # KD050HDFIA020 (4-lane) / KD050HDFIA023_W4 (2-lane), both 720x1280
 elseif(_lcd_conf MATCHES "\n[ \t]*#define[ \t]+LCD_DSI_ST7102_YH494")
@@ -51,6 +56,7 @@ if(UI_DIR)
     message(STATUS "SquareLine UI folder: ${UI_DIR}")
     file(GLOB_RECURSE ui_sources "${UI_DIR}/*.c")
     sdk_add_include_directories(${UI_DIR})
+    sdk_add_compile_definitions(-DLVGL_WITH_SQUARELINE_UI=1)
 else()
     message(STATUS "No SquareLine UI (DPI built-in demo)")
     set(ui_sources "")

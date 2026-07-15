@@ -52,6 +52,8 @@ int at_through_input(uint8_t *data, int32_t len)
     if (g_through_max_size > 0) {
         int unit_size = 0;
         int send_size = 0;
+        int remaining = g_through_max_size - g_through_recv_size;
+        len = (len > remaining) ? remaining : len;
         while (len - send_size > 0) {
             if (len - send_size >= g_through_transmit_size)
                 unit_size = g_through_transmit_size;

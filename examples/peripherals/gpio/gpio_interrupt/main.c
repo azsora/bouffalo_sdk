@@ -6,34 +6,35 @@
 
 struct bflb_device_s *gpio;
 struct bflb_device_s *uart0;
+static uint8_t gpio_int_pin = GPIO_PIN_0;
 
 void gpio0_isr(uint8_t pin)
 {
-    static uint32_t i = 0;
-    if (pin == GPIO_PIN_0) {
-        printf("i:%d\r\n", i++);
+    if (pin == gpio_int_pin) {
+        printf("Interrupt Trigger!\r\n");
     }
 }
 
-int set_int_mode(int argc, char **argv)
+int gpio_int_test(int argc, char **argv)
 {
     printf("Set gpio interrupt triggle mode\r\n");
 
-    if ((argc != 2) || (atoi(argv[1]) > 3)) {
-        printf("Usage: set_int_mode <value>\r\n"
+    if ((argc != 3) || (atoi(argv[1]) >= GPIO_PIN_MAX) || (atoi(argv[2]) > 3)) {
+        printf("Usage: gpio_int_test <gpio> <mode>\r\n"
                "    0: GPIO_INT_TRIG_MODE_SYNC_FALLING_EDGE\r\n"
                "    1: GPIO_INT_TRIG_MODE_SYNC_RISING_EDGE\r\n"
                "    2: GPIO_INT_TRIG_MODE_SYNC_LOW_LEVEL\r\n"
                "    3: GPIO_INT_TRIG_MODE_SYNC_HIGH_LEVEL\r\n");
         return 1;
-    } else {
-        printf("Set gpio interrupt triggle mode to %d\r\n", atoi(argv[1]));
     }
 
+    printf("Set gpio%d interrupt triggle mode to %d\r\n", atoi(argv[1]), atoi(argv[2]));
+
     bflb_irq_disable(gpio->irq_num);
-    bflb_gpio_init(gpio, GPIO_PIN_0, GPIO_INPUT | GPIO_PULLUP | GPIO_SMT_EN);
-    bflb_gpio_int_init(gpio, GPIO_PIN_0, atoi(argv[1]));
-    bflb_gpio_irq_attach(GPIO_PIN_0, gpio0_isr);
+    gpio_int_pin = atoi(argv[1]);
+    bflb_gpio_init(gpio, atoi(argv[1]), GPIO_INPUT | GPIO_PULLUP | GPIO_SMT_EN);
+    bflb_gpio_int_init(gpio, atoi(argv[1]), atoi(argv[2]));
+    bflb_gpio_irq_attach(atoi(argv[1]), gpio0_isr);
     bflb_irq_enable(gpio->irq_num);
 
     return 0;
@@ -56,4 +57,4 @@ int main(void)
         }
     }
 }
-SHELL_CMD_EXPORT_ALIAS(set_int_mode, set_int_mode, shell set_int_triggle_mode.);
+SHELL_CMD_EXPORT_ALIAS(gpio_int_test, gpio_int_test, shell gpio_int_test.);

@@ -113,6 +113,12 @@ void board_pec_dpi_gpio_init(void);
 #define PEC_SRGB_DE_PIN    GPIO_PIN_27
 void board_pec_srgb_gpio_init(void);
 
+#define PEC_DVP_CAM_VSYNC_PIN GPIO_PIN_9
+#define PEC_DVP_CAM_HSYNC_PIN GPIO_PIN_10
+#define PEC_DVP_CAM_PCLK_PIN  GPIO_PIN_8
+#define PEC_DVP_CAM_DATA0_PIN GPIO_PIN_7
+void board_pec_dvp_cam_gpio_init(void);
+
 void board_i2s_codec_gpio_init(void);
 
 #if defined(CONFIG_BSP_LCD)

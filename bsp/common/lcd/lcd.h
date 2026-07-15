@@ -210,6 +210,15 @@
 #define LCD_COLOR_DEPTH              ILI9881C_KD050023W4_DSI_COLOR_DEPTH
 #define _LCD_FUNC_DEFINE(_func, ...) ili9881c_kd050023w4_dsi_##_func(__VA_ARGS__)
 
+#elif defined LCD_DSI_ILI9806E_KD050FWFIA019
+
+#include "mipi_dsi/ili9806e_kd050fwfia019_dsi.h"
+#define LCD_INTERFACE_TYPE           LCD_INTERFACE_DSI
+#define LCD_W                        ILI9806E_KD050FWFIA019_DSI_W
+#define LCD_H                        ILI9806E_KD050FWFIA019_DSI_H
+#define LCD_COLOR_DEPTH              ILI9806E_KD050FWFIA019_DSI_COLOR_DEPTH
+#define _LCD_FUNC_DEFINE(_func, ...) ili9806e_kd050fwfia019_dsi_##_func(__VA_ARGS__)
+
 #elif defined LCD_DSI_ST7102_YH494
 
 #include "mipi_dsi/st7102_yh494_dsi.h"

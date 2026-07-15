@@ -3,19 +3,7 @@
 #include "task.h"
 #include "board.h"
 
-#include "bluetooth.h"
-#include "conn.h"
 #include "rfparam_adapter.h"
-
-#if defined(BL602)
-#include "ble_lib_api.h"
-#else
-#include "btble_lib_api.h"
-#endif
-
-#include "ble_cli_cmds.h"
-#include "hci_driver.h"
-#include "hci_core.h"
 
 #include "bflb_mtd.h"
 #include "easyflash.h"
@@ -46,61 +34,9 @@ extern void wifi_task_create(void);
 extern int wifi_mgmr_task_start(void);
 #endif
 
-static void ble_connected(struct bt_conn *conn, u8_t err)
-{
-    printf("%s",__func__);
-}
-
-static void ble_disconnected(struct bt_conn *conn, u8_t reason)
-{
-    int ret;
-
-    printf("%s",__func__);
-
-    // enable adv
-    ret = set_adv_enable(true);
-    if(ret) {
-        printf("Restart adv fail. \r\n");
-    }
-}
-
-static struct bt_conn_cb ble_conn_callbacks = {
-	.connected	=   ble_connected,
-	.disconnected	=   ble_disconnected,
-};
-
-void bt_enable_cb(int err)
-{
-    if (!err) {
-        bt_addr_le_t bt_addr;
-        bt_get_local_public_address(&bt_addr);
-        printf("BD_ADDR:(MSB)%02x:%02x:%02x:%02x:%02x:%02x(LSB) \r\n",
-               bt_addr.a.val[5], bt_addr.a.val[4], bt_addr.a.val[3], bt_addr.a.val[2], bt_addr.a.val[1], bt_addr.a.val[0]);
-        bt_conn_cb_register(&ble_conn_callbacks);
-        ble_cli_register();
-    }
-}
-
-static void ble_start_task_entry(void *pvParameters)
-{
-    // Initialize BLE controller
-    #if defined(BL702) || defined(BL602)
-    ble_controller_init(configMAX_PRIORITIES - 1);
-    #else
-    btble_controller_init(configMAX_PRIORITIES - 1);
-    #endif
-    // Initialize BLE Host stack
-    hci_driver_init();
-    bt_enable(bt_enable_cb);
-
-    vTaskDelete(NULL);
-}
-
-static void ble_start_task(void)
-{
-    static TaskHandle_t app_start_handle;
-    xTaskCreate(ble_start_task_entry, (char *)"ble_start", 1024, NULL, configMAX_PRIORITIES - 2, &app_start_handle);
-}
+#if defined(CONFIG_BLUETOOTH)
+extern int btble_cli_start(void);
+#endif
 
 void wifi_start_firmware_task(void *param)
 {
@@ -196,7 +132,9 @@ int main(void)
 
     tcpip_init(NULL, NULL);
     xTaskCreate(wifi_start_firmware_task, "wifi init", 1024, NULL, 10, NULL);
-    ble_start_task();
+#if defined(CONFIG_BLUETOOTH)
+    btble_cli_start();
+#endif
 
     vTaskStartScheduler();
 

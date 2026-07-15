@@ -47,7 +47,7 @@ void app_main_entry(void *arg)
     easyflash_init();
 
     /* romsfs init mount use media factory*/
-    romfs_mount(0x378000);
+    romfs_mount(0x778000);
 
     // filesystem_init();
 

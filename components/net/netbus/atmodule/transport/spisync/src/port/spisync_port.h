@@ -25,7 +25,7 @@
                                 } while(0==1)
 #else
 #define spisync_trace(...)
-#define spisync_dbg
+#define spisync_dbg           
 #define spisync_log(...)
 #define spisync_err(M, ...)
 #define spisync_buf(...)

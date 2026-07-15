@@ -59,6 +59,13 @@ int bl_mipi_dpi_v2_screen_switch(void *screen_buffer);
 void *bl_mipi_dpi_v2_get_screen_using(void);
 int bl_mipi_dpi_v2_frame_callback_register(uint32_t callback_type, void (*callback)(void));
 
+/* Base (DPI background) layer swap, invoked from the OSD SEOF ISR on every frame
+ * boundary. Weak no-op by default: OSD0-only LVGL apps need no override (the base
+ * layer just scans black). An app driving a video background overrides this with a
+ * strong definition to latch the next decoded YUV frame into the DPI base layer
+ * (see dpi_manager.c). */
+void bl_mipi_dpi_v2_osd0_base_layer_swap(void);
+
 #endif
 
 #endif

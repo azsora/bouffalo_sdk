@@ -178,7 +178,9 @@ void board_init(void)
     /* heap init */
     ram_heap_init();
 
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
     if (ret != 0) {
         printf("flash init fail!!!\r\n");
     }

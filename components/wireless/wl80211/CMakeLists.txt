@@ -19,6 +19,7 @@ if(DEFINED PROJECT_SDK_VERSION)
     endif()
 
     sdk_add_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+    sdk_add_include_directories(${CMAKE_CURRENT_SOURCE_DIR})
     sdk_add_private_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/macsw)
 
     if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src)

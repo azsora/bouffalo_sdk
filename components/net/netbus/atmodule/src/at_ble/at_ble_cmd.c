@@ -152,8 +152,58 @@ static int at_setup_cmd_ble_addr(int argc, const char **argv)
 
     if(at_ble_set_public_addr(addr) != 0)
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
-    
+
     return AT_RESULT_CODE_OK;
+}
+
+static int at_query_cmd_ble_static_addr(int argc, const char **argv)
+{
+    bt_addr_le_t addr;
+
+    if (at_ble_config->work_role == BLE_DISABLE)
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_INIT);
+
+    if (at_ble_get_static_addr(&addr) != 0)
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
+
+    at_response_string("+BLESTATICADDR:\"%02x:%02x:%02x:%02x:%02x:%02x\"\r\n",
+            addr.a.val[5], addr.a.val[4], addr.a.val[3],
+            addr.a.val[2], addr.a.val[1], addr.a.val[0]);
+
+    return AT_RESULT_CODE_OK;
+}
+
+static int at_setup_cmd_ble_static_addr(int argc, const char **argv)
+{
+	char addr_string[18];
+	uint8_t addr_bytes[6];
+	bt_addr_le_t addr;
+
+	AT_CMD_PARSE_STRING(0, addr_string, sizeof(addr_string));
+
+	if (get_mac_from_string(addr_string, addr_bytes) != 0)
+		return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+
+	if (at_ble_config->work_role == BLE_DISABLE)
+		return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_INIT);
+
+	if ((addr_bytes[0] & 0xC0) != 0xC0) {
+		AT_BLE_CMD_PRINTF("Invalid static random address\r\n");
+		return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+	}
+
+	addr.type = BT_ADDR_LE_RANDOM;
+	addr.a.val[0] = addr_bytes[5];
+	addr.a.val[1] = addr_bytes[4];
+	addr.a.val[2] = addr_bytes[3];
+	addr.a.val[3] = addr_bytes[2];
+	addr.a.val[4] = addr_bytes[1];
+	addr.a.val[5] = addr_bytes[0];
+
+	if (at_ble_set_static_addr(&addr) != 0)
+		return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
+
+	return AT_RESULT_CODE_OK;
 }
 
 static int at_query_cmd_ble_name(int argc, const char **argv)
@@ -1166,7 +1216,7 @@ static int at_query_cmd_ble_sec_param(int argc, const char **argv)
 {
     if (at_ble_config->work_role == BLE_DISABLE)
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_INIT);
-    at_response_string("+BLESECPARAM:%d,%d\r\n",at_ble_config->ble_sec_param,at_ble_config->ble_sec_lvl);
+    at_response_string("+BLESECPARAM:%d,%d,%d\r\n",at_ble_config->ble_sec_param,at_ble_config->ble_sec_lvl,at_ble_config->ble_bond_enable ? 1 : 0);
     return AT_RESULT_CODE_OK;
 }
 
@@ -1175,24 +1225,30 @@ static int at_setup_cmd_ble_sec_param(int argc, const char **argv)
     int sec_param = 0;
     int sec_level = 1;
     int level_vaild = 0;
+    int bond = 1;
+    int bond_valid = 0;
     if (at_ble_config->work_role == BLE_DISABLE)
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_INIT);
     AT_CMD_PARSE_NUMBER(0, &sec_param);
     if(sec_param < 0 || sec_param > 4)
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
     AT_CMD_PARSE_OPT_NUMBER(1, &sec_level, level_vaild);
-    
-    // Validate security level parameter
+
     if (level_vaild && (sec_level < 0 || sec_level > 4)) {
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
     }
     if (sec_param == 3 && sec_level > 2) {
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
     }
-    if(at_ble_sec_paramter_setup(sec_param,sec_level))
+    AT_CMD_PARSE_OPT_NUMBER(2, &bond, bond_valid);
+    if (bond_valid && (bond < 0 || bond > 1)) {
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_PARA_VALUE_INVALID);
+    }
+    if(at_ble_sec_paramter_setup(sec_param, sec_level, (bool)bond))
        return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
     at_ble_config->ble_sec_param = sec_param;
     at_ble_config->ble_sec_lvl = sec_level;
+    at_ble_config->ble_bond_enable = (bool)bond;
     return AT_RESULT_CODE_OK;
 }
 
@@ -1760,48 +1816,59 @@ int at_setup_cmd_ble_gap_appearance(int argc, const char **argv)
 
 }
 
+static int at_exe_cmd_ble_generate_aes_iv(int argc, const char **argv)
+{
+    if (at_ble_config->work_role == BLE_DISABLE)
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_INIT);
+    if(!at_ble_generate_aes_iv())
+        return AT_RESULT_CODE_OK;
+
+    return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
+}
+
 static const at_cmd_struct at_ble_cmd[] = {
     {"+BLEINIT", at_query_cmd_ble_init, at_setup_cmd_ble_init, NULL, 1, 1},
     {"+BLEADDR", at_query_cmd_ble_addr, at_setup_cmd_ble_addr, NULL, 1, 1},
+    {"+BLESTATICADDR", at_query_cmd_ble_static_addr, at_setup_cmd_ble_static_addr, NULL, 1, 1},
     {"+BLENAME", at_query_cmd_ble_name, at_setup_cmd_ble_name, NULL, 1, 1},
     {"+BLESCANPARAM", at_query_cmd_ble_scan_param, at_setup_cmd_ble_scan_param, NULL, 5, 5},
     {"+BLESCAN", NULL, at_setup_cmd_ble_scan, NULL, 1, 1},
-    {"+BLESCANRSPDATA",  NULL, at_setup_cmd_ble_scan_rsp_data, NULL, 1, 1},
+    {"+BLESCANRSPDATA", NULL, at_setup_cmd_ble_scan_rsp_data, NULL, 1, 1},
     {"+BLEADVPARAM", at_query_cmd_ble_adv_param, at_setup_cmd_ble_adv_param, NULL, 4, 4},
-    {"+BLEADVDATA",NULL, at_setup_cmd_ble_adv_data, NULL, 1, 1},
-    {"+BLEADVSTART",  NULL, NULL, at_exe_cmd_ble_adv_start, 0, 0},
+    {"+BLEADVDATA", NULL, at_setup_cmd_ble_adv_data, NULL, 1, 1},
+    {"+BLEADVSTART", NULL, NULL, at_exe_cmd_ble_adv_start, 0, 0},
     {"+BLEADVSTOP", NULL, NULL, at_exe_cmd_ble_adv_stop, 0, 0},
     {"+BLECONN", at_query_cmd_ble_conn, at_setup_cmd_ble_conn, NULL, 2, 4},
-    {"+BLECONNPARAM",  at_query_cmd_ble_conn_param, at_setup_cmd_ble_conn_param, NULL, 5, 5},
-    {"+BLEDISCONN",  NULL, at_setup_cmd_ble_disconn, NULL, 1, 1},
-    {"+BLEDATALEN",  NULL, at_setup_cmd_ble_datalen, NULL, 3, 3},
+    {"+BLECONNPARAM", at_query_cmd_ble_conn_param, at_setup_cmd_ble_conn_param, NULL, 5, 5},
+    {"+BLEDISCONN", NULL, at_setup_cmd_ble_disconn, NULL, 1, 1},
+    {"+BLEDATALEN", NULL, at_setup_cmd_ble_datalen, NULL, 3, 3},
     {"+BLEEXCHANGEMTU", NULL, at_setup_cmd_ble_exchange_mtu, NULL, 1, 1},
     {"+BLEGATTSSRV", at_query_cmd_ble_gatts_service, NULL, NULL, 0, 0},
-    {"+BLEGATTSSRVCRE",NULL, at_setup_cmd_ble_gatts_service_create, NULL, 4, 4},
+    {"+BLEGATTSSRVCRE", NULL, at_setup_cmd_ble_gatts_service_create, NULL, 4, 4},
     {"+BLEGATTSSRVDEL", NULL, at_setup_cmd_ble_gatts_service_delete, NULL, 1, 1},
     {"+BLEGATTSREGISTER", NULL, at_setup_cmd_ble_gatts_service_register, NULL, 1, 1},
     {"+BLEGATTSCHAR", at_query_cmd_ble_gatts_char, NULL, NULL, 0, 0},
     {"+BLEGATTSCHARCRE", NULL, at_setup_cmd_ble_gatts_char_create, NULL, 6, 6},
-    {"+BLEGATTSNTFY",  NULL, at_setup_cmd_ble_gatts_notify, NULL, 3, 4},
-    {"+BLEGATTSIND",NULL, at_setup_cmd_ble_gatts_indicate, NULL, 3, 4},
+    {"+BLEGATTSNTFY", NULL, at_setup_cmd_ble_gatts_notify, NULL, 3, 4},
+    {"+BLEGATTSIND", NULL, at_setup_cmd_ble_gatts_indicate, NULL, 3, 4},
     {"+BLEGATTSRD", NULL, at_setup_cmd_ble_gatts_read, NULL, 3, 3},
     {"+BLEGATTCSRVDIS", NULL, at_setup_cmd_ble_gattc_service_discover, NULL, 1, 1},
-    {"+BLEGATTCCHARDIS",  NULL, at_setup_cmd_ble_gattc_char_discover, NULL, 2, 2},
+    {"+BLEGATTCCHARDIS", NULL, at_setup_cmd_ble_gattc_char_discover, NULL, 2, 2},
     {"+BLEGATTCWR", NULL, at_setup_cmd_ble_gattc_write, NULL, 4, 4},
     {"+BLEGATTCRD", NULL, at_setup_cmd_ble_gattc_read, NULL, 3, 3},
-    {"+BLEGATTCSUBSCRIBE",  NULL, at_setup_cmd_ble_gattc_subscribe, NULL, 4, 4},
+    {"+BLEGATTCSUBSCRIBE", NULL, at_setup_cmd_ble_gattc_subscribe, NULL, 4, 4},
     {"+BLEGATTCUNSUBSCRIBE", NULL, at_setup_cmd_ble_gattc_unsubscribe, NULL, 2, 2},
     {"+BLETXPWR", at_query_cmd_ble_tx_power, at_setup_cmd_ble_tx_power, NULL, 1, 1},
-    {"+BLESECPARAM",  at_query_cmd_ble_sec_param, at_setup_cmd_ble_sec_param, NULL, 1, 2},
-    {"+BLESECCANNEL",NULL, at_setup_cmd_ble_sec_cancel, NULL, 1, 1},
+    {"+BLESECPARAM", at_query_cmd_ble_sec_param, at_setup_cmd_ble_sec_param, NULL, 1, 3},
+    {"+BLESECCANNEL", NULL, at_setup_cmd_ble_sec_cancel, NULL, 1, 1},
     {"+BLESECPASSKEYCONFIRM", NULL, at_setup_cmd_ble_sec_passkey_confirm, NULL, 1, 1},
     {"+BLESECPAIRINGCONFIRM", NULL, at_setup_cmd_ble_sec_pairing_confirm, NULL, 1, 1},
     {"+BLESECPASSKEY", NULL, at_setup_cmd_ble_sec_passkey, NULL, 2, 2},
     {"+BLESECGETLTKLIST", at_query_cmd_ble_ltk_list, NULL, NULL, 0, 0},
     {"+BLESECUNPAIR", NULL, at_setup_cmd_ble_sec_unpair, NULL, 2, 2},
-    {"+BLESECSTART",  NULL, at_setup_cmd_ble_sec_start, NULL, 2, 2},
+    {"+BLESECSTART", NULL, at_setup_cmd_ble_sec_start, NULL, 2, 2},
 #if defined(CONFIG_BT_BAS_SERVER)
-    {"+BLEBASINIT",  NULL, NULL, at_exe_cmd_ble_bas_register, 0, 0},
+    {"+BLEBASINIT", NULL, NULL, at_exe_cmd_ble_bas_register, 0, 0},
     {"+BLEBASDEINIT", NULL, NULL, at_exe_cmd_ble_bas_unregister, 0, 0},
     {"+BLEBASLVLGET", at_query_cmd_ble_bas_getlevel, NULL,NULL, 0, 0},
     {"+BLEBASLVLSET", NULL, at_setup_cmd_ble_bas_setlevel, NULL, 2, 2},
@@ -1815,7 +1882,8 @@ static const at_cmd_struct at_ble_cmd[] = {
     {"+BLEDISDEINIT", NULL, NULL, at_exe_cmd_ble_dis_unregister, 0, 0},
     {"+BLEDISSET", NULL, at_setup_cmd_ble_dis_set,NULL, 3, 3},
 #endif
-    {"+BLESETGAPAPPEARANCE",  NULL, at_setup_cmd_ble_gap_appearance, NULL, 1, 1},
+    {"+BLESETGAPAPPEARANCE", NULL, at_setup_cmd_ble_gap_appearance, NULL, 1, 1},
+    {"+BLEAESIV", NULL, NULL, at_exe_cmd_ble_generate_aes_iv, 0, 0},
     {NULL, NULL, NULL, NULL, 0, 0},
 };
 
@@ -1830,4 +1898,3 @@ bool at_ble_cmd_regist(void)
     else
         return false;
 }
-

@@ -66,14 +66,14 @@ SECTIONS
         *(EXCLUDE_FILE( *bl702_glb*.o* \
                         *bl702_pds*.o* \
                         *bl702_common*.o* \
-                        *bl702_sf_cfg*.o* \
+                        *bflb_sf_cfg*.o* \
                         *bl702_sf_cfg_ext*.o* \
-                        *bl702_sf_ctrl*.o* \
-                        *bl702_sflash*.o* \
+                        *bflb_sf_ctrl*.o* \
+                        *bflb_sflash*.o* \
                         *bl702_sflash_ext*.o* \
-                        *bl702_xip_sflash*.o* \
+                        *bflb_xip_sflash*.o* \
                         *bl702_xip_sflash_ext*.o* \
-                        *bl702_ef_ctrl*.o*) .rodata*)
+                        *bflb_ef_ctrl*.o*) .rodata*)
 
         *(.srodata)
         *(.srodata.*)
@@ -140,14 +140,14 @@ SECTIONS
         *bl702_glb*.o*(.rodata*)
         *bl702_pds*.o*(.rodata*)
         *bl702_common*.o*(.rodata*)
-        *bl702_sf_cfg*.o*(.rodata*)
+        *bflb_sf_cfg*.o*(.rodata*)
         *bl702_sf_cfg_ext*.o*(.rodata*)
-        *bl702_sf_ctrl*.o*(.rodata*)
-        *bl702_sflash*.o*(.rodata*)
+        *bflb_sf_ctrl*.o*(.rodata*)
+        *bflb_sflash*.o*(.rodata*)
         *bl702_sflash_ext*.o*(.rodata*)
-        *bl702_xip_sflash*.o*(.rodata*)
+        *bflb_xip_sflash*.o*(.rodata*)
         *bl702_xip_sflash_ext*.o*(.rodata*)
-        *bl702_ef_ctrl*.o*(.rodata*)
+        *bflb_ef_ctrl*.o*(.rodata*)
 
         . = ALIGN(4);
         __tcm_code_end__ = .;

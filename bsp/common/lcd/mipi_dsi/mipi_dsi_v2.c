@@ -79,6 +79,79 @@ const GLB_DSIPLL_Cfg_Type ATTR_CLOCK_CONST_SECTION dsipllCfg_500M[GLB_XTAL_MAX] 
     { NULL, 0x0 }, { NULL, 0x0 },
 };
 
+/* 550M */
+const GLB_DSIPLL_CFG_BASIC_Type ATTR_CLOCK_CONST_SECTION dsipll550MCfg_40M = {
+    .refdiv_ratio = 4,
+    .vco_speed = 4,
+    .vco_idac_extra = 2,
+    .tdc_dly_sel = 1,
+    .dtc_r_sel = 2,
+    .lf_alpha_base = 0,
+    .lf_alpha_exp = 2,
+    .lf_alpha_fast = 3,
+    .lf_beta_base = 3,
+    .lf_beta_exp = 1,
+    .lf_beta_fast = 1,
+    .spd_gain = 2,
+    .lms_ext_en = 0,
+    .lms_ext_value = 32,
+    .bitclk_div = 2,
+};
+
+const GLB_DSIPLL_Cfg_Type ATTR_CLOCK_CONST_SECTION dsipllCfg_550M[GLB_XTAL_MAX] = {
+    { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { &dsipll550MCfg_40M, 0x37000 },
+    { NULL, 0x0 }, { NULL, 0x0 },
+};
+
+/* 650M */
+const GLB_DSIPLL_CFG_BASIC_Type ATTR_CLOCK_CONST_SECTION dsipll650MCfg_40M = {
+    .refdiv_ratio = 4,
+    .vco_speed = 6,
+    .vco_idac_extra = 2,
+    .tdc_dly_sel = 0,
+    .dtc_r_sel = 0,
+    .lf_alpha_base = 0,
+    .lf_alpha_exp = 2,
+    .lf_alpha_fast = 3,
+    .lf_beta_base = 3,
+    .lf_beta_exp = 1,
+    .lf_beta_fast = 1,
+    .spd_gain = 0,
+    .lms_ext_en = 0,
+    .lms_ext_value = 32,
+    .bitclk_div = 2,
+};
+
+const GLB_DSIPLL_Cfg_Type ATTR_CLOCK_CONST_SECTION dsipllCfg_650M[GLB_XTAL_MAX] = {
+    { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { &dsipll650MCfg_40M, 0x41000 },
+    { NULL, 0x0 }, { NULL, 0x0 },
+};
+
+/* 750M */
+const GLB_DSIPLL_CFG_BASIC_Type ATTR_CLOCK_CONST_SECTION dsipll750MCfg_40M = {
+    .refdiv_ratio = 4,
+    .vco_speed = 7,
+    .vco_idac_extra = 2,
+    .tdc_dly_sel = 0,
+    .dtc_r_sel = 0,
+    .lf_alpha_base = 0,
+    .lf_alpha_exp = 2,
+    .lf_alpha_fast = 3,
+    .lf_beta_base = 3,
+    .lf_beta_exp = 1,
+    .lf_beta_fast = 1,
+    .spd_gain = 0,
+    .lms_ext_en = 0,
+    .lms_ext_value = 32,
+    .bitclk_div = 2,
+};
+
+const GLB_DSIPLL_Cfg_Type ATTR_CLOCK_CONST_SECTION dsipllCfg_750M[GLB_XTAL_MAX] = {
+    { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { NULL, 0x0 }, { &dsipll750MCfg_40M, 0x4B000 },
+    { NULL, 0x0 }, { NULL, 0x0 },
+};
+
+/* 850M */
 const GLB_DSIPLL_CFG_BASIC_Type ATTR_CLOCK_CONST_SECTION dsipll850MCfg_40M = {
     .refdiv_ratio = 4,
     .vco_speed = 2,
@@ -159,11 +232,15 @@ void mipi_dsi_v2_hs_mode_start(const mipi_dsi_v2_timing_t *cfg)
     /* DPI pixel clock is derived from the display clock configured in setup()
      * (display_clk_sel / display_clk_div), so read it back instead of carrying
      * a hand-copied constant that can drift out of sync with the divider. */
-    uint32_t dpi_pixel_clock = Clock_Peripheral_Clock_Get(BL_PERIPHERAL_CLOCK_DISPLAY);//63000000 86000000
-    bflb_dsi_set_line_buffer_threshold(dsi_dev, cfg->width, dpi_pixel_clock, cfg->dsi_hs_clock,
+    uint32_t dpi_pixel_clock = Clock_Peripheral_Clock_Get(BL_PERIPHERAL_CLOCK_DISPLAY);
+    if(dpi_pixel_clock>=60000000){
+        bflb_dsi_set_line_buffer_threshold(dsi_dev, cfg->width, dpi_pixel_clock+4000000, cfg->dsi_hs_clock,
                                        cfg->data_type, cfg->lane_num);//dpi_pixel_clock
-    // bflb_dsi_set_line_buffer_threshold(dsi_dev, cfg->width, 63000000, cfg->dsi_hs_clock,
-    //                                    cfg->data_type, cfg->lane_num);//dpi_pixel_clock
+    }
+    else{
+        bflb_dsi_set_line_buffer_threshold(dsi_dev, cfg->width, dpi_pixel_clock, cfg->dsi_hs_clock,
+                                       cfg->data_type, cfg->lane_num);//dpi_pixel_clock
+    }
     bflb_dsi_phy_hs_mode_start(dsi_dev);
 }
 
@@ -224,83 +301,6 @@ int mipi_dsi_v2_dcs_write_cmd(uint8_t data_type, uint8_t cmd, const uint8_t *dat
     return 0;
 }
 
-/* ---------- DCS read ---------- */
-
-int mipi_dsi_v2_dcs_read(uint8_t cmd, uint8_t *buf, uint16_t len)
-{
-    struct bflb_device_s *dsi = dsi_dev;
-    uint8_t tx_buf[2];
-    int ret;
-
-    volatile uint32_t *phy_base = (volatile uint32_t *)DSI_PLL_BASE;
-    volatile uint32_t *dsi_ctrl = (volatile uint32_t *)DSI_V2_CTRL_BASE;
-
-    /* Ensure PHY analog RX is fully enabled for LPDT read */
-    phy_base[0x38 / 4] |= (1U << 4) | (1U << 8) | (1U << 20); /* BG_VREF + ANA_VREF */
-    phy_base[0x3C / 4] |=
-        0xF | (0xF << 4) | (0xF << 8) | (0xF << 12) | (1U << 20) | (1U << 24); /* HSTXEN + byte ctrl + ESC clk */
-    phy_base[0x44 / 4] |= (0xF << 12) | (0xF << 16) | (1U << 24);              /* LPTXEN + LPRXEN + CLK LP TX */
-    phy_base[0x2C / 4] |= (0xF << 4) | (1U << 20);                             /* LPRX_BW_SEL + VREG400_EN_V_VREF */
-
-    /* Clear FORCERXMODE + TURNESC from any previous attempt */
-    phy_base[0x6C / 4] &= ~((1U << 16) | (1U << 24));
-    /* Ensure D0 LPTXEN is set for TX phase */
-    phy_base[0x44 / 4] |= (1U << 12);
-    /* Clear ESC_RX_EN and ESC_TX_EN */
-    dsi_ctrl[0x04 / 4] &= ~((1U << 16) | (1U << 0));
-
-    /* Clear RX FIFO and all interrupts */
-    dsi_ctrl[0x60 / 4] |= (1U << 3);
-    dsi_ctrl[0x60 / 4] &= ~(1U << 3);
-    dsi_ctrl[0x18 / 4] = 0x3FFF;
-
-    uint8_t max_ret[2] = { len & 0xff, (len >> 8) & 0xff };
-    bflb_dsi_lpdt_msg_t set_max_msg = {
-        .virtual_chan = 0,
-        .data_type = DSI_V2_SET_MAX_RET_PKT_SIZE,
-        .tx_len = 2,
-        .tx_buf = max_ret,
-    };
-    ret = bflb_dsi_lpdt_send_short_packet(dsi, &set_max_msg);
-    if (ret) {
-        printf("  set_max_ret failed: %d\r\n", ret);
-        return ret;
-    }
-
-    tx_buf[0] = cmd;
-    tx_buf[1] = 0;
-    bflb_dsi_lpdt_msg_t read_msg = {
-        .virtual_chan = 0,
-        .data_type = DSI_V2_DCS_READ,
-        .tx_len = 1,
-        .tx_buf = tx_buf,
-        .rx_buf = buf,
-        .rx_len = len,
-    };
-
-    ret = bflb_dsi_lpdt_send_short_packet(dsi, &read_msg);
-    if (ret) {
-        printf("  send read cmd failed: %d\r\n", ret);
-        return ret;
-    }
-
-    ret = bflb_dsi_lpdt_recv(dsi, &read_msg);
-    if (ret) {
-        printf("  recv failed: %d, CFG14=0x%08x RB0=0x%08x\r\n", ret, phy_base[0x6C / 4], phy_base[0x70 / 4]);
-        phy_base[0x6C / 4] &= ~((1U << 16) | (1U << 24));
-        phy_base[0x44 / 4] |= (1U << 12);
-        dsi_ctrl[0x04 / 4] &= ~((1U << 16) | (1U << 0));
-        return ret;
-    }
-
-    printf("  RX ok: len=%u, data:", read_msg.rx_len);
-    for (uint16_t i = 0; i < read_msg.rx_len && i < 16; i++) {
-        printf(" %02x", buf[i]);
-    }
-    printf("\r\n");
-    return 0;
-}
-
 /* ---------- Frame-buffer switch (OSD0 blend + SEOF interrupt, shared by all v2 panels) ----------
  *
  * The LVGL canvas is the OSD0 blend overlay on top of the DPI background. Switching
@@ -310,43 +310,33 @@ int mipi_dsi_v2_dcs_read(uint8_t cmd, uint8_t *buf, uint16_t len)
  * OSD0 (not OSD1) is used so OSD1 stays free for another overlay. */
 
 static struct bflb_device_s *dsi_v2_osd = NULL;
-static struct bflb_device_s *dsi_v2_dpi = NULL;
 static void *dsi_v2_screen_using = NULL;
 static void (*dsi_v2_swap_callback)(void) = NULL;
 static void (*dsi_v2_cycle_callback)(void) = NULL;
 
-/* Pending video (DPI background) frame, latched at the next SEOF (between frames,
- * so the background never tears mid-scanout). Owned by the app's dpi_manager
- * (defined there, extern here); it holds the *display* address (the panel-sized
- * planar buffer the DPI scans out) and raises dpi_show_pending when the frame is
- * ready. The ISR latches it and clears the flag. */
-extern volatile uint32_t dpi_show_bufaddr0;  /* Y plane to scan out */
-extern volatile uint32_t dpi_show_bufaddr1;  /* UV plane to scan out */
-extern volatile uint8_t dpi_show_pending;
-/* Triple-buffer in-flight tracking (defined in the app's dpi_manager, extern here).
- * The swap latches one frame late, so two buffers are hardware-owned at once: [0]
- * scanning now, [1] latched to scan next. The SEOF ISR rotates this set each latch
- * so the decode task can tell which Y buffers it must not overwrite. */
-extern volatile uint32_t dpi_busy_y[2];
+/**
+ * @brief Base (DPI background) layer swap, invoked from the OSD SEOF ISR.
+ *
+ * Weak no-op by default: an OSD0-only LVGL app needs nothing here (the base layer
+ * just scans black). An app that drives a video background overrides this (see the
+ * video pipeline in dpi_manager.c) to latch the next decoded YUV frame into the DPI
+ * base layer at the frame boundary -- so the background switches between frames,
+ * never mid-scanout. Keeping it weak means the driver no longer reaches into the
+ * app's video state (the old dpi_show_* / dpi_busy_y externs are gone). */
+__attribute__((weak)) void mipi_dsi_v2_osd0_base_layer_swap(void)
+{
+}
 
-static void mipi_dsi_v2_osd_isr(int irq, void *arg)
+static void mipi_dsi_v2_osd0_isr(int irq, void *arg)
 {
     (void)irq;
     (void)arg;
 
     bflb_osd_int_clear(dsi_v2_osd);
 
-    /* SEOF crossed: latch the pending video frame here so the DPI background
-     * switches between frames, not mid-scanout. */
-    if (dpi_show_pending && dsi_v2_dpi != NULL) {
-        bflb_dpi_framebuffer_planar_switch(dsi_v2_dpi, dpi_show_bufaddr0, dpi_show_bufaddr1);
-        /* Rotate the in-flight set: what was "next" ([1]) is now scanning ([0]),
-         * and the just-latched buffer becomes "next". The decode task reads this to
-         * stay off buffers the scanner still owns. */
-        dpi_busy_y[0] = dpi_busy_y[1];
-        dpi_busy_y[1] = dpi_show_bufaddr0;
-        dpi_show_pending = 0;
-    }
+    /* SEOF crossed: swap the base (DPI background) layer -- weak no-op unless an
+     * app overrides it to latch the next video frame between scanouts. */
+    mipi_dsi_v2_osd0_base_layer_swap();
 
     if (dsi_v2_cycle_callback != NULL) {
         dsi_v2_cycle_callback();
@@ -363,7 +353,7 @@ void mipi_dsi_v2_osd_irq_init(struct bflb_device_s *osd)
     dsi_v2_osd = osd;
     bflb_osd_int_clear(osd);
     bflb_osd_int_mask(osd, false);
-    bflb_irq_attach(osd->irq_num, mipi_dsi_v2_osd_isr, NULL);
+    bflb_irq_attach(osd->irq_num, mipi_dsi_v2_osd0_isr, NULL);
     bflb_irq_enable(osd->irq_num);
 }
 
@@ -382,10 +372,9 @@ int mipi_dsi_v2_display_init(const mipi_dsi_v2_timing_t *cfg, uint32_t osd_buf)
     if (dpi == NULL || osd == NULL) {
         return -1;
     }
-    dsi_v2_dpi = dpi;
 
     /* [1] DPI background scan-out layer. framebuffer_addr=0: the video pipeline
-     * switches in real YUV frames at runtime. */
+     * switches in real YUV frames at runtime (via the app's base-layer swap). */
     struct bflb_dpi_config_s dpi_config = {
         .width = cfg->width,
         .height = cfg->height,
@@ -423,9 +412,6 @@ int mipi_dsi_v2_display_init(const mipi_dsi_v2_timing_t *cfg, uint32_t osd_buf)
         .layer_buffer_addr = osd_buf,
     };
     bflb_osd_blend_init(osd, &osd_blend_config);
-
-    (*(volatile uint32_t *)0x2004A4FC) &= ~(0x7 << 12);
-    (*(volatile uint32_t *)0x2004A4FC) |= (0x4 << 12);
 
     bflb_osd_blend_enable(osd);
 

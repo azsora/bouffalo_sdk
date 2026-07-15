@@ -46,6 +46,44 @@ Enter the build command line:
 make CONFIG_BLE_ENABLE=0
 ```
 
+### Enable IPv6
+
+IPv6 is disabled by default in this demo. Add `CONFIG_IPV6=y` when building the image if IPv6 is required.
+
+Build with Wi-Fi and BLE:
+
+```bash
+make CHIP=bl616 BOARD=bl616dk CONFIG_IPV6=y
+```
+
+Build Wi-Fi only with IPv6:
+
+```bash
+make CHIP=bl616 BOARD=bl616dk CONFIG_BLE_ENABLE=0 CONFIG_IPV6=y
+```
+
+After the board boots, connect Wi-Fi first. IPv6 is not enabled automatically after Wi-Fi connection in this low-power precise timer mode. Enable STA IPv6 at runtime with:
+
+```bash
+wifi_sta_ipv6_enable
+```
+
+This command creates the STA IPv6 link-local address and enables IPv6 autoconfig. If the router sends RA with a valid prefix, the STA can generate a global IPv6 address after DAD completes.
+
+Check IPv6 address state:
+
+```bash
+wifi_sta_info
+```
+
+Disable STA IPv6 at runtime with:
+
+```bash
+wifi_sta_ipv6_disable
+```
+
+The `wifi_sta_ipv6_enable` and `wifi_sta_ipv6_disable` commands are only available in images built with `CONFIG_IPV6=y`.
+
 ### Test DTIM:
 
 1.Reset board

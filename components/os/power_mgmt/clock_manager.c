@@ -23,6 +23,7 @@
 #endif
 #include "bflb_rtc.h"
 #include "bflb_mtimer.h"
+#include "bflb_ef_ctrl.h"
 #include "clock_manager.h"
 #include "bl_lp.h"
 
@@ -54,6 +55,8 @@ static bool clock_source_xtal_supported(void)
 #define RC32K_STEP_PPM                   (800)
 #define RC32K_MAX_STEP                   (5)
 #define RC32K_MIN_SIGNIFICANT_STEP_PPM   (400)
+#define RC32K_R_CODE_MAX                 (0x3ff)
+#define RC32K_DIVERGENCE_ENABLE_PPM      (1000)
 
 static struct bflb_device_s *rtc;
 
@@ -104,6 +107,48 @@ static void rc32k_get_trim_code(uint32_t *c_code, uint32_t *r_code)
 #endif
 }
 
+static void rc32k_print_efuse_trim(void)
+{
+    bflb_ef_ctrl_com_trim_t trim;
+    BL_Err_Type trim_ret;
+    uint8_t parity_calc;
+    uint32_t c_code_before;
+    uint32_t r_code_before;
+    uint32_t c_code_after;
+    uint32_t r_code_after;
+
+    rc32k_get_trim_code(&c_code_before, &r_code_before);
+
+#if defined(BL616CL)
+    bflb_ef_ctrl_read_common_trim(NULL, "rc32k_cap", &trim, 1);
+#elif defined(BL618DG)
+    bflb_ef_ctrl_read_common_trim(NULL, "rc32k", &trim, 1);
+#endif
+    parity_calc = bflb_ef_ctrl_get_trim_parity(trim.value, 4);
+
+    printf("rc32k_trim_efuse: en=%u, empty=%u, value=%u, parity=%u, parity_calc=%u, c_code_before=%u, r_code_before=%u\r\n",
+           trim.en, trim.empty, trim.value, trim.parity, parity_calc, c_code_before, r_code_before);
+
+    trim_ret = HBN_Trim_RC32K();
+    rc32k_get_trim_code(&c_code_after, &r_code_after);
+
+    printf("rc32k_trim_efuse: HBN_Trim_RC32K ret=%d, c_code_after=%u, r_code_after=%u\r\n",
+           trim_ret, c_code_after, r_code_after);
+}
+
+static uint32_t rc32k_clamp_r_code(int code)
+{
+    if (code < 0) {
+        return 0;
+    }
+
+    if (code > RC32K_R_CODE_MAX) {
+        return RC32K_R_CODE_MAX;
+    }
+
+    return (uint32_t)code;
+}
+
 static uint32_t rc32k_coarse_calibration(uint32_t cali_val)
 {
     uint32_t retry_cnt = 0;
@@ -123,10 +168,11 @@ static uint32_t rc32k_coarse_calibration(uint32_t cali_val)
     uint32_t c_code = 0;
     uint32_t r_code = 0;
     uint32_t rc32k_code = 0;
-    int last_error_ppm = 0;
-    int last_diff_code = 0;
-    int first_measure = 1;
+    int best_error_ppm = 0;
+    uint32_t best_code = 0;
+    int has_best = 0;
 
+    rc32k_print_efuse_trim();
     HBN_Trim_RC32K();
     rc32k_get_trim_code(&c_code, &r_code);
     rc32k_code = r_code;
@@ -188,26 +234,30 @@ static uint32_t rc32k_coarse_calibration(uint32_t cali_val)
             break;
         }
 
-        if (!first_measure && abs(error_ppm) > abs(last_error_ppm) && abs(last_error_ppm) > 1) {
+        if (has_best &&
+            abs(best_error_ppm) <= RC32K_DIVERGENCE_ENABLE_PPM &&
+            abs(error_ppm) > abs(best_error_ppm) &&
+            abs(best_error_ppm) > 1) {
             is_diverging = 1;
         }
 
         if (is_diverging) {
             printf(" (diverging, rollback)\r\n");
 
-            rc32k_code = HBN_Get_RC32K_R_Code();
-            rc32k_code = (uint32_t)((int)rc32k_code - last_diff_code);
-
-            diff_code = (last_error_ppm < 0) ? -1 : 1;
-            rc32k_code = (uint32_t)((int)rc32k_code + diff_code);
+            diff_code = (best_error_ppm < 0) ? -1 : 1;
+            rc32k_code = rc32k_clamp_r_code((int)best_code + diff_code);
             HBN_Set_RC32K_R_Code(rc32k_code);
 
             printf("rc32k_coarse_trim: adjust code=%u (diff=%d)\r\n", rc32k_code, diff_code);
 
-            last_diff_code = diff_code;
-            first_measure = 0;
             vTaskDelay(RC32K_SETTLE_DELAY_MS);
             continue;
+        }
+
+        if (!has_best || abs(error_ppm) < abs(best_error_ppm)) {
+            best_error_ppm = error_ppm;
+            best_code = rc32k_code;
+            has_best = 1;
         }
 
         diff_code = error_ppm / RC32K_STEP_PPM;
@@ -224,14 +274,11 @@ static uint32_t rc32k_coarse_calibration(uint32_t cali_val)
         }
 
         rc32k_code = HBN_Get_RC32K_R_Code();
-        rc32k_code = (uint32_t)((int)rc32k_code + diff_code);
+        rc32k_code = rc32k_clamp_r_code((int)rc32k_code + diff_code);
         HBN_Set_RC32K_R_Code(rc32k_code);
 
         printf(" (adjust code=%u, diff=%d)\r\n", rc32k_code, diff_code);
-
-        last_error_ppm = error_ppm;
-        last_diff_code = diff_code;
-        first_measure = 0;
+        printf(" (best code=%u, best diff=%d)\r\n", best_code, best_error_ppm);
 
         vTaskDelay(RC32K_SETTLE_DELAY_MS);
     }

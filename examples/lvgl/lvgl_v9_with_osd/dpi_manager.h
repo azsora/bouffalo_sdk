@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "lcd.h" /* panel selected in lcd_conf_user.h -> LCD_W / LCD_H */
+#include "video_config.h" /* customer knobs: VIDEO_WIDTH/HEIGHT, VIDEO_TARGET_FPS */
 
 /* Panel resolution follows whatever lcd_conf_user.h selected, so
  * switching panels is just a one-line change there (no edits in this project). */
@@ -17,35 +18,42 @@
 #define DPI_PIXEL_CLOCK_USE_SW_GPIO 0
 #endif
 
-/* Background video size. When it equals the panel, the MJDEC decodes straight
- * into the DPI framebuffer (no centering, no intermediate copy). When smaller,
- * it is decoded to a scratch buffer and composited into the center with black
- * borders (the DPI background layer has no offset register). Defaults to the
- * panel size (full-screen); override here for a centered sub-panel video. 
- * (384x768 480x960) (576x1024 720x1280) (172x640) (700x420 800x480) (960x540 1024x600) */
+/* VIDEO_WIDTH / VIDEO_HEIGHT config live in video_config.h. */
 #ifndef VIDEO_WIDTH
-#define VIDEO_WIDTH    1024
+#define VIDEO_WIDTH    LCD_WIDTH
 #endif
 #ifndef VIDEO_HEIGHT
-#define VIDEO_HEIGHT   600
+#define VIDEO_HEIGHT   LCD_HEIGHT
 #endif
 
-#define VIDEO_OFFSET_X ((LCD_WIDTH - VIDEO_WIDTH) / 2)
+/* VIDEO_OFFSET_X must be 4-aligned: the DMA2D composite does 32-bit writes to
+ * base+stride*Y+X (stride=LCD_WIDTH, 4-aligned), so a non-4 X 
+ * bus-faults. Round the centering offset down to a multiple of 4 (video shifts <=3px into the border). */
+#define VIDEO_OFFSET_X (((LCD_WIDTH - VIDEO_WIDTH) / 2) & ~3u)
 #define VIDEO_OFFSET_Y ((LCD_HEIGHT - VIDEO_HEIGHT) / 2)
 
-/* Background video does not need to run flat-out; capping it leaves more CPU
- * time for the lower-priority LVGL overlay task. */
-#define VIDEO_TARGET_FPS      100U
+/* MJDEC decodes whole 16x16 MCUs: it WRITES ceil(dim/16)*16 px per plane, so every decode
+ * buffer must be MCU-aligned or it overruns and corrupts PSRAM (-> "parse header error"/timeouts;
+ * e.g. 854->864, 480 stays). Panel scans only WIDTH x HEIGHT. When WIDTH isn't 16-aligned the
+ * decode stride > scan stride and a direct decode shears -> VIDEO_FULLSCREEN routes it via DMA2D. */
+#define MJDEC_MCU_ALIGN(v) (((v) + 15) & ~15u)
+#define LCD_WIDTH_MCU      MJDEC_MCU_ALIGN(LCD_WIDTH)
+#define LCD_HEIGHT_MCU     MJDEC_MCU_ALIGN(LCD_HEIGHT)
+#define LCD_PIXELS_MCU     (LCD_WIDTH_MCU * LCD_HEIGHT_MCU)
+#define VIDEO_WIDTH_MCU    MJDEC_MCU_ALIGN(VIDEO_WIDTH)
+#define VIDEO_HEIGHT_MCU   MJDEC_MCU_ALIGN(VIDEO_HEIGHT)
+
+/* VIDEO_TARGET_FPS lives in video_config.h (customer-editable). Derived from it: */
 #define VIDEO_FRAME_PERIOD_MS ((1000U + VIDEO_TARGET_FPS - 1U) / VIDEO_TARGET_FPS)
 
-/* Full-screen video -> direct decode into the framebuffer (the early, fast path).
- * Any smaller size -> decode-to-scratch + centered composite. */
-#define VIDEO_FULLSCREEN ((VIDEO_WIDTH == LCD_WIDTH) && (VIDEO_HEIGHT == LCD_HEIGHT))
+/* Full-screen fast path: decode straight into the framebuffer. Requires MCU-aligned width
+ * == LCD_WIDTH, because the DTSRC/DVP2AXI scanout has no pitch register (only visible width),
+ * so a non-16-aligned width would shear -> fall back to DMA2D crop/repack. */
+#define VIDEO_FULLSCREEN ((VIDEO_WIDTH == LCD_WIDTH) && (VIDEO_HEIGHT == LCD_HEIGHT) && \
+                          (VIDEO_WIDTH_MCU == VIDEO_WIDTH))
 
-/* Bring up the video pipeline: MJDEC + (sub-panel) DMA2D + ping-pong YUV
- * background framebuffers. The DSI display side (panel link, DPI background
- * layer, OSD0 overlay, OSD interrupt) is brought up earlier by lcd_init() ->
- * the panel's _dsi_init() -> mipi_dsi_v2. Returns 0 on success. */
+/* Bring up the video pipeline (MJDEC + sub-panel DMA2D + ping-pong YUV buffers); the
+ * display side is already up via lcd_init() -> the panel's _dsi_init(). Returns 0 on success. */
 int dpi_manager_init(void);
 
 #if defined(CONFIG_FREERTOS)

@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/fcntl.h>
+#include <fcntl.h>
 #include "at_fs.h"
 __attribute__((weak)) int at_fs_open(const char *path, int flags)
 {

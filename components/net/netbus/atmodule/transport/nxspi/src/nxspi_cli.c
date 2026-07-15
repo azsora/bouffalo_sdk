@@ -358,7 +358,6 @@ int nx_iperf_task(void *arg)
                 uint32_t throughput = total_bytes / (INTERVAL_MS / 1000);  // bytes per second
                 NX_LOGI("Throughput: %u bytes/sec\r\n", throughput);
                 (void)throughput;
-
                 // Reset for next interval
                 total_bytes = 0;
                 last_time = current_time;
@@ -544,9 +543,9 @@ int cmd_nx(int argc, char *argv[])
 #endif
 
     NX_LOGP("dn (at+net):(%d+%d), fq:%d, dnmsg:%p, buf:%d*%d",
-            uxQueueMessagesWaiting(g_nxspi.dnat),
-            uxQueueMessagesWaiting(g_nxspi.dnnet),
-            uxQueueMessagesWaiting(g_nxspi.dnfq),
+            uxQueueMessagesWaiting(g_nxspi.dn[0]),
+            uxQueueMessagesWaiting(g_nxspi.dn[1]),
+            uxQueueMessagesWaiting(g_nxspi.dn[2]),
             g_nxspi.dnmsg,
             NXBD_ITEMS, NXBD_MTU);
     for (int i= 0; i < NXBD_ITEMS; i++) {
@@ -583,7 +582,7 @@ int cmd_nx(int argc, char *argv[])
 #endif
 
     int _bdreceived(void);
-    printf("bdreceived:%d\r\n", _bdreceived());
+    printf("bdreveived:%d\r\n", _bdreceived());
 
     printf("use:%lu us, start:%llu, end:%llu\r\n",
             g_nxspi.cfg_usetime, g_nxspi.cfg_starttime, g_nxspi.cfg_endtime);
@@ -683,4 +682,3 @@ int cmd_netstream(int argc, char **argv)
 }
 SHELL_CMD_EXPORT_ALIAS(cmd_netstream, netstream, netstream command to ctrl to host or local);
 #endif
-

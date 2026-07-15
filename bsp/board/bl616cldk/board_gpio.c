@@ -319,6 +319,34 @@ void board_pec_qspi_cam_gpio_init(void)
     bflb_gpio_init(gpio, GPIO_PIN_23, GPIO_FUNC_I2C0 | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_2);
 }
 
+void board_pec_dvp_cam_gpio_init(void)
+{
+    struct bflb_device_s *gpio;
+
+    gpio = bflb_device_get_by_name("gpio");
+
+    /* I2C0 */
+    bflb_gpio_init(gpio, GPIO_PIN_4, GPIO_FUNC_I2C0 | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+    bflb_gpio_init(gpio, GPIO_PIN_5, GPIO_FUNC_I2C0 | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+
+    /* Power down GPIO */
+    // bflb_gpio_init(gpio, GPIO_PIN_29, GPIO_OUTPUT | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+    // bflb_gpio_set(gpio, GPIO_PIN_29);
+    // bflb_mtimer_delay_ms(10);
+    // bflb_gpio_reset(gpio, GPIO_PIN_29);
+    // bflb_mtimer_delay_ms(10);
+
+    /* MCLK GPIO */
+    GLB_Set_Chip_Clock_Out1_Sel(GLB_CHIP_CLK_OUT_1_CAM_REF_CLK);
+    bflb_gpio_init(gpio, GPIO_PIN_20, GPIO_FUNC_CLKOUT | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+
+    /* PEC CAM GPIO */
+    bflb_gpio_init(gpio, PEC_DVP_CAM_VSYNC_PIN, GPIO_FUNC_PEC | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+    bflb_gpio_init(gpio, PEC_DVP_CAM_HSYNC_PIN, GPIO_FUNC_PEC | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+    bflb_gpio_init(gpio, PEC_DVP_CAM_PCLK_PIN, GPIO_FUNC_PEC | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+    bflb_gpio_init(gpio, PEC_DVP_CAM_DATA0_PIN, GPIO_FUNC_PEC | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+}
+
 void board_pec_dpi_gpio_init(void)
 {
     struct bflb_device_s *gpio;

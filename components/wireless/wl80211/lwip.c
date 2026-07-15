@@ -123,6 +123,10 @@ err_t wl80211_output(struct netif *net_if, struct pbuf *buf)
     txseg[0].iov_len = buf->len;
     remain_len -= buf->len;
 
+    if (!netif_is_link_up(net_if)) {
+        return ERR_IF;
+    }
+
     // Increase the ref count so that the buffer is not freed by the networking
     // stack until it is actually sent over the WiFi interface
     pbuf_ref(buf);

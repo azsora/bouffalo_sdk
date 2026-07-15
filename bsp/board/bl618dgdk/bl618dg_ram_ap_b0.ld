@@ -127,11 +127,11 @@ SECTIONS
         *(EXCLUDE_FILE( *bl618dg_glb*.o* \
                         *bl618dg_pds*.o* \
                         *bl618dg_common*.o* \
-                        *bl618dg_sf_cfg*.o* \
-                        *bl618dg_sf_ctrl*.o* \
-                        *bl618dg_sflash*.o* \
-                        *bl618dg_xip_sflash*.o* \
-                        *bl618dg_ef_ctrl*.o* \
+                        *bflb_sf_cfg*.o* \
+                        *bflb_sf_ctrl*.o* \
+                        *bflb_sflash*.o* \
+                        *bflb_xip_sflash*.o* \
+                        *bflb_ef_ctrl*.o* \
                         *bl618dg_romapi_patch*.o* ).rodata*)
 
         *(.srodata)
@@ -208,11 +208,11 @@ SECTIONS
         *bl618dg_glb*.o*(.rodata*)
         *bl618dg_pds*.o*(.rodata*)
         *bl618dg_common*.o*(.rodata*)
-        *bl618dg_sf_cfg*.o*(.rodata*)
-        *bl618dg_sf_ctrl*.o*(.rodata*)
-        *bl618dg_sflash*.o*(.rodata*)
-        *bl618dg_xip_sflash*.o*(.rodata*)
-        *bl618dg_ef_ctrl*.o*(.rodata*)
+        *bflb_sf_cfg*.o*(.rodata*)
+        *bflb_sf_ctrl*.o*(.rodata*)
+        *bflb_sflash*.o*(.rodata*)
+        *bflb_xip_sflash*.o*(.rodata*)
+        *bflb_ef_ctrl*.o*(.rodata*)
         *bl618dg_romapi_patch*.o*(.rodata*)
 
         . = ALIGN(4);

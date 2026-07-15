@@ -1,4 +1,20 @@
 # Changes
+## 2026-07-10
+1. [bredr_cli_cmds] Reduce code size by replacing embedded A2DP source audio data with a generated test tone.
+
+## 2026-07-03
+1. [blestack] Fix BLE connection info reporting to show only connected LE links, avoiding pending connection objects being shown with zero remote addresses.
+
+## 2026-06-30
+1.Fix concurrent connection collision issue with same peer between advertiser and initiator.
+
+## 2026-06-29
+1. [blestack] Add black-box test CLI commands (cancel discover/write/read/indicate, gatt_indicate, conn_count, directed_adv).
+2. [blestack] Hold conn reference in ble_tp_task to avoid use-after-free on disconnect.
+
+## 2026-06-26
+1. [ble_tp_cli] Improve throughput rate accuracy: replace software-timer sampling with self-timed reporter using xTaskGetTickCount real elapsed time, eliminating jitter from task preemption and timer-callback blocking. Rate unit corrected from mislabeled Kb/s to KB/s (/1024).
+
 ## 2026-06-18
 1. [BR/EDR] Fix discovery being stuck after stop during the name-resolution window: when the inquiry has already completed and the host is resolving device names, Inquiry Cancel returns Command Disallowed (-EACCES); treat this as a successful stop -- detach the callback, cancel the in-flight remote name requests, clear the discovery state, and return 0 so a subsequent start works. Late name completions racing with the cancels are dropped via the detached-callback guards instead of being reported after stop.
 

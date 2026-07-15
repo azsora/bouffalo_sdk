@@ -149,6 +149,19 @@ static struct ble_srv_data *g_ble_srv_data = NULL;
 static void ble_gatts_srv_clean(void)
 {
     if (g_ble_srv_data != NULL) {
+        // Free read_data buffers for all characteristics before freeing service data
+        for (int i = 0; i < BLE_SRV_MAX_NUM; i++) {
+            if (g_ble_srv_data[i].valid) {
+                for (int j = 0; j < BLE_CHAR_MAX_NUM; j++) {
+                    if (g_ble_srv_data[i].srv_char[j].read_data != NULL) {
+                        at_free(g_ble_srv_data[i].srv_char[j].read_data);
+                        g_ble_srv_data[i].srv_char[j].read_data = NULL;
+                    }
+                    g_ble_srv_data[i].srv_char[j].read_data_len = 0;
+                }
+            }
+        }
+
         memset(g_ble_srv_data, 0, sizeof(struct ble_srv_data) * BLE_SRV_MAX_NUM);
         at_free(g_ble_srv_data);
         g_ble_srv_data = NULL;
@@ -391,7 +404,6 @@ static void ble_connected(struct bt_conn *conn, u8_t err)
                         remote_addr->a.val[1],
                         remote_addr->a.val[0],
                         BT_CONN_ROLE_SLAVE);
-
     }
 }
 
@@ -509,6 +521,7 @@ static void bt_enable_cb(int err)
                bt_addr.a.val[5], bt_addr.a.val[4], bt_addr.a.val[3], bt_addr.a.val[2], bt_addr.a.val[1], bt_addr.a.val[0]);
         AT_BLE_PRINTF("SUPPORT %d CONN\r\n",BLE_CONN_MAX_NUM);
         bt_conn_cb_register(&ble_conn_callbacks);
+        g_ble_is_inited = 2;
     }
 }
 
@@ -617,7 +630,7 @@ static struct bt_conn_auth_cb auth_cb_display = {
 	.pairing_complete = NULL,
 };
 
-int at_ble_sec_paramter_setup(int sec, int level)
+int at_ble_sec_paramter_setup(int sec, int level, bool bond)
 {
     int err = 0;
     switch(sec)
@@ -669,7 +682,25 @@ int at_ble_sec_paramter_setup(int sec, int level)
 
     err = bt_conn_auth_cb_register(&auth_cb_display);
 
-    return err;
+    if(err != 0)
+        return err;
+
+    bt_set_bondable(bond);
+
+    for (int i = 0; i < BLE_CONN_MAX_NUM; i++) {
+        struct ble_conn_data *conn_data = ble_conn_data_get_by_idx(i);
+
+        if (conn_data == NULL || conn_data->state != BLE_CONN_STATE_CONNECTED) {
+            continue;
+        }
+
+        err = bt_conn_set_security(conn_data->conn, level);
+        if (err != 0) {
+            return err;
+        }
+    }
+
+    return 0;
 }
 
 
@@ -801,16 +832,25 @@ void ble_dynamic_rd_cb(struct bt_conn *conn,const struct bt_gatt_attr* attr,u8_t
     struct ble_conn_data *conn_data = ble_conn_data_get_by_conn(conn);
     if (conn_data == NULL)
         return;
-    u16_t read_len =0;
 
-    read_len = g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len;
-    if (read_len > 0) {
-        if(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data != NULL)
-        {
-            memcpy(data, g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, read_len);
-        }
+    /* Notify AT host that a remote client issued a read request. */
+    at_response_string("+BLE:READPERMISSION:%d,%d,%d\r\n", conn_data->idx, srv_idx, char_idx);
+
+    // Initialize length to 0
+    *length = 0;
+
+    // Check if read_data buffer exists (only allocated for characteristics with read permission)
+    if(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data == NULL)
+    {
+        AT_BLE_PRINTF("Warning: read_data is NULL for char %d,%d (no read permission or not allocated)\r\n", srv_idx, char_idx);
+        return;
     }
-    *length=read_len;
+
+    u16_t read_len = g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len;
+    if (read_len > 0) {
+        memcpy(data, g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, read_len);
+        *length = read_len;
+    }
 }
 void ble_dynamic_noti_cb(const struct bt_gatt_attr* attr ,u8_t data)
 {
@@ -863,6 +903,38 @@ int at_ble_set_random_addr(uint8_t *addr)
 {
     //do nothing, default is random address
     return 0;
+}
+
+int at_ble_set_static_addr(const bt_addr_le_t *addr)
+{
+	if (!addr) {
+		return -EINVAL;
+	}
+
+	int err = bt_set_local_random_address(addr);
+	if (err) {
+		return err;
+	}
+
+	at_ble_config->use_static_random_addr = true;
+
+	if (at_ble_config->scan_param.own_addr_type == 0) {
+		at_ble_config->scan_param.own_addr_type = 1;
+		AT_BLE_PRINTF("Auto-updated scan own_addr_type to 1 (Random Address)\r\n");
+	}
+
+	return 0;
+}
+
+int at_ble_get_static_addr(bt_addr_le_t *addr)
+{
+	if (!addr) {
+		return -EINVAL;
+	}
+
+	bt_get_local_ramdon_address(addr);
+
+	return 0;
 }
 
 int at_ble_set_tx_power(int power)
@@ -1656,7 +1728,9 @@ int at_ble_gatts_service_register(int enable)
         if(g_ble_dynamic_init == 1)
         {
             if(ble_dynamic_unregister_service())
-                return 1;
+            {
+              return 1;
+            }
             ble_dynamic_gatt_server_deinit();
 
             g_ble_dynamic_init = 0;
@@ -1692,18 +1766,26 @@ int at_ble_gatts_service_char_set(int srv_idx, int char_idx, uint8_t *char_uuid,
     g_ble_srv_data[srv_idx].srv_char[char_idx].char_prop = char_prop;
     g_ble_srv_data[srv_idx].srv_char[char_idx].char_perm = char_perm;
     g_ble_srv_data[srv_idx].srv_char[char_idx].attr = NULL;
+
     if (g_ble_srv_data[srv_idx].srv_char[char_idx].read_data != NULL) {
         at_free(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data);
         g_ble_srv_data[srv_idx].srv_char[char_idx].read_data = NULL;
     }
-    g_ble_srv_data[srv_idx].srv_char[char_idx].read_data = (char *)at_malloc(244);
-    if (g_ble_srv_data[srv_idx].srv_char[char_idx].read_data == NULL)
-    {
-        AT_BLE_PRINTF("Failed to allocate memory for read_data\r\n");
-        return 0;
+
+    if (char_prop & BLE_GATT_CHAR_PROP_READ) {
+        g_ble_srv_data[srv_idx].srv_char[char_idx].read_data = (char *)at_malloc(244);
+        if (g_ble_srv_data[srv_idx].srv_char[char_idx].read_data == NULL)
+        {
+            AT_BLE_PRINTF("Failed to allocate memory for read_data\r\n");
+            return 0;
+        }
+        memset(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, 0, 244);
+        g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len = 0;
+    } else {
+        g_ble_srv_data[srv_idx].srv_char[char_idx].read_data = NULL;
+        g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len = 0;
     }
-    memset(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data,0,244);
-    g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len = 0;
+
     g_ble_srv_data[srv_idx].srv_char[char_idx].valid = 1;
     return 1;
 }
@@ -1868,31 +1950,34 @@ int at_ble_gatts_service_read(int srv_idx, int char_idx, void * buffer, int leng
     if (g_ble_srv_data[srv_idx].srv_char[char_idx].valid == 0)
         return 0;
 
-    if (g_ble_srv_data[srv_idx].srv_char[char_idx].char_prop & BLE_GATT_CHAR_PROP_READ && length <= 244) {
-        // Add bounds checking to prevent buffer overflow
-        if (g_ble_srv_data[srv_idx].srv_char[char_idx].read_data == NULL) {
-            AT_BLE_PRINTF("Error: read_data is NULL\r\n");
-            return 0;
-        }
-        if (length > 244) {
-            AT_BLE_PRINTF("Error: length %d exceeds maximum buffer size 244\r\n", length);
-            return 0;
-        }
-
-        // Clear data buffer
-        memset(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, 0, 244);
-
-        // Copy data only if length > 0 and buffer is not NULL
-        if (length > 0 && buffer != NULL) {
-            memcpy(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, buffer, length);
-        }
-
-        g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len = length;
-        return length;
-
-    } else {
+    // Check if characteristic has read property
+    if (!(g_ble_srv_data[srv_idx].srv_char[char_idx].char_prop & BLE_GATT_CHAR_PROP_READ)) {
+        AT_BLE_PRINTF("Error: Characteristic %d,%d does not have read property\r\n", srv_idx, char_idx);
         return 0;
     }
+
+    // Check if read_data buffer exists (should exist if characteristic has read permission)
+    if (g_ble_srv_data[srv_idx].srv_char[char_idx].read_data == NULL) {
+        AT_BLE_PRINTF("Error: read_data is NULL for characteristic %d,%d with read permission\r\n", srv_idx, char_idx);
+        return 0;
+    }
+
+    // Validate length
+    if (length > 244) {
+        AT_BLE_PRINTF("Error: length %d exceeds maximum buffer size 244\r\n", length);
+        return 0;
+    }
+
+    // Clear data buffer
+    memset(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, 0, 244);
+
+    // Copy data only if length > 0 and buffer is not NULL
+    if (length > 0 && buffer != NULL) {
+        memcpy(g_ble_srv_data[srv_idx].srv_char[char_idx].read_data, buffer, length);
+    }
+
+    g_ble_srv_data[srv_idx].srv_char[char_idx].read_data_len = length;
+    return length;
 }
 
 static uint32_t print_chrc_props(u8_t properties)
@@ -2692,12 +2777,15 @@ int at_ble_dis_set(char* dis_name, char* dis_value, int dis_value_len)
 #endif
 int at_ble_init(int role)
 {
+    AT_MODULE_INIT_WAIT(at_wifi_is_busy);
+
     if (g_ble_is_inited == 0&&role != BLE_DISABLE) {
 
+        g_ble_is_inited = 1;
        if (!atomic_test_bit(bt_dev.flags, BT_DEV_ENABLE))
         {
             // Initialize BLE controller
-            #if defined(BFLB_undef) || defined(BFLB_undef)
+            #if defined(BL602) || defined(BL702)
             ble_controller_init(configMAX_PRIORITIES - 1);
             #else
             btble_controller_init(configMAX_PRIORITIES - 1);
@@ -2706,7 +2794,6 @@ int at_ble_init(int role)
             hci_driver_init();
             bt_enable(bt_enable_cb);
         }
-        g_ble_is_inited = 1;
     }
     else {
         if(role ==BLE_DISABLE)
@@ -2789,7 +2876,6 @@ int at_ble_init(int role)
     auth_cb_display.pairing_failed   = auth_pairing_failed;
 	auth_cb_display.pairing_complete = auth_pairing_complete;
     auth_cb_display.cancel           = auth_cancel;
-
     if(bt_conn_auth_cb_register(&auth_cb_display)!=0)
         return -1;
     #endif
@@ -2806,4 +2892,9 @@ int at_ble_start(void)
 int at_ble_stop(void)
 {
     return 0;
+}
+
+bool at_ble_is_busy(void)
+{
+    return (g_ble_is_inited == 1);
 }

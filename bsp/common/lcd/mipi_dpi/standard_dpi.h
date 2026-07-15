@@ -21,8 +21,8 @@
  *
  */
 
-#ifndef _STANDARD_DBI_H_
-#define _STANDARD_DBI_H_
+#ifndef _STANDARD_DPI_H_
+#define _STANDARD_DPI_H_
 
 #include "../lcd_conf.h"
 

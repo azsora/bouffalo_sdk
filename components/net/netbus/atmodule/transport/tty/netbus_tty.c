@@ -101,7 +101,7 @@ int netbus_tty_send(netbus_tty_ctx_t *pctx, const uint8_t *p_data, uint32_t len,
 #endif
 
 #endif
-    return len;
+    return (int)len;
 }
 
 int netbus_tty_receive(netbus_tty_ctx_t *pctx, uint8_t *p_buffer, uint32_t buf_len, uint32_t timeout)

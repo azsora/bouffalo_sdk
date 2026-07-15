@@ -88,6 +88,9 @@ struct nd6_neighbor_cache_entry {
     u32_t probes_sent;
     u32_t stale_time;     /* ticks (ND6_TMR_INTERVAL) */
   } counter;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t timer_deadline_ms;
+#endif
 };
 
 struct nd6_destination_cache_entry {
@@ -101,12 +104,18 @@ struct nd6_prefix_list_entry {
   ip6_addr_t prefix;
   struct netif *netif;
   u32_t invalidation_timer; /* in seconds */
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t timer_deadline_ms;
+#endif
 };
 
 struct nd6_router_list_entry {
   struct nd6_neighbor_cache_entry *neighbor_entry;
   u32_t invalidation_timer; /* in seconds */
   u8_t flags;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t timer_deadline_ms;
+#endif
 };
 
 enum nd6_neighbor_cache_entry_state {

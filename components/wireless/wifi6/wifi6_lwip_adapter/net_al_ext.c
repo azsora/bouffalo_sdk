@@ -28,6 +28,9 @@ int is_sta_netif(struct netif *nif);
 #include <lwip/ethip6.h>
 #include <lwip/dhcp6.h>
 #include <lwip/nd6.h>
+
+static struct netif *sta_ipv6_netif;
+static uint8_t sta_ipv6_enabled;
 #endif
 
 #include "lwip/tcpip.h"
@@ -62,25 +65,20 @@ static ip4_addr_t saved_ip_mask = {IPADDR_ANY};
 static ip4_addr_t saved_ip_gw = {IPADDR_ANY};
 static int dhcp_renew_ok = 0;
 
-/**
- * @brief Re-enable Wi-Fi PS mode for coex time-division
- *
- * Wi-Fi PS does not auto-enable on reconnect, so we must explicitly
- * request it when coex mode is enabled. This function sends
- * ME_SET_PS_MODE_REQ to enable dynamic PS mode (PS_MODE_ON_DYN).
- */
-#if MACSW_POWERSAVE
-static void ps_coex_wifi_ps_enable(void)
+#ifdef BL618DG
+static uint8_t net_al_ext_sta_band(void)
 {
-    struct me_set_ps_mode_req *ps_req = rtos_malloc(sizeof(struct me_set_ps_mode_req));
-    if (ps_req) {
-        ps_req->ps_state = 1;
-        ps_req->ps_mode = PS_MODE_ON_DYN;
-        macif_kmsg_call(ME_SET_PS_MODE_CFM, NULL, 0,
-                        ME_SET_PS_MODE_REQ, TASK_ME, ps_req,
-                        sizeof(struct me_set_ps_mode_req));
-        rtos_free(ps_req);
+    struct fhost_vif_status vif_status;
+
+    if (fhost_get_vif_status(MGMR_VIF_STA, &vif_status)) {
+        return PHY_BAND_MAX;
     }
+
+    if (vif_status.chan.prim20_freq == 0) {
+        return PHY_BAND_MAX;
+    }
+
+    return vif_status.chan.band;
 }
 #endif
 
@@ -230,11 +228,15 @@ static int fhost_dhcp_start(net_al_if_t net_if, uint32_t to_ms, uint32_t from_ap
 {
     uint32_t start_ms;
     bool coex_prot_acquired = false;
+    uint8_t coex_prot_band = PHY_BAND_2G4;
     int ret = 0;
     int dhcp_renew = 0;
 
     if (wifi_mgmr_sta_coex_status_get()) {
-        coex_prot_acquired = (coex_protect_acquire(COEX_PROT_DHCP) == 0);
+#ifdef BL618DG
+        coex_prot_band = net_al_ext_sta_band();
+#endif
+        coex_prot_acquired = (coex_protect_acquire(COEX_PROT_DHCP, coex_prot_band) == 0);
     }
 
     // Run DHCP client
@@ -275,7 +277,7 @@ static int fhost_dhcp_start(net_al_if_t net_if, uint32_t to_ms, uint32_t from_ap
 
 out:
     if (coex_prot_acquired) {
-        (void)coex_protect_release(COEX_PROT_DHCP);
+        (void)coex_protect_release(COEX_PROT_DHCP, coex_prot_band);
     }
 
     return ret;
@@ -639,44 +641,86 @@ static void net_quick_dhcp_stop(net_al_if_t net_if)
 }
 
 #ifdef CFG_IPV6
-static void net_al_create_ip6_linklocal_address(int ipv6_enable)
+static err_t net_al_enable_ipv6_core(struct netif *netif)
 {
-    struct netif *n = fhost_to_net_if(MGMR_VIF_STA);
+    err_t err;
 
-    if (!n) {
-        printf("Fail to get netif.\r\n");
+    LWIP_ASSERT_CORE_LOCKED();
 
-        return;
-    }
+    if (sta_ipv6_enabled && sta_ipv6_netif == netif) {
+        u8_t state = netif_ip6_addr_state(netif, 0);
 
-    if (ipv6_enable) {
-        LOCK_TCPIP_CORE();
-#if LWIP_IPV6_MLD
-        netif_set_flags(n, NETIF_FLAG_MLD6);
-#endif
-        netif_create_ip6_linklocal_address(n, 1);
-        netif_set_ip6_autoconfig_enabled(n, true);
-        ipv6_timer_switch(1);
-        UNLOCK_TCPIP_CORE();
-    } else {
-        LOCK_TCPIP_CORE();
-        ipv6_timer_switch(0);
-
-#if LWIP_IPV6_DHCP6
-        dhcp6_disable(n);
-#endif
-        netif_set_ip6_autoconfig_enabled(n, false);
-
-        for (int i = 0; i < LWIP_IPV6_NUM_ADDRESSES; i++) {
-            netif_ip6_addr_set_state(n, i, IP6_ADDR_INVALID);
+        if (ip6_addr_isduplicated(state)) {
+            return ERR_USE;
+        }
+        if (!ip6_addr_isinvalid(state)) {
+            return ERR_OK;
         }
 
-#if LWIP_IPV6_MLD
-        netif_clear_flags(n, NETIF_FLAG_MLD6);
-#endif
-        nd6_cleanup_netif(n);
-        UNLOCK_TCPIP_CORE();
+        /* Recover explicit state after netif reinitialization or external
+         * IPv6 teardown, then perform a real 0 -> 1 transition below. */
+        sta_ipv6_enabled = 0;
+        sta_ipv6_netif = NULL;
     }
+    if (netif->hwaddr_len < 6) {
+        return ERR_VAL;
+    }
+
+    /* A replaced STA netif starts a new explicit enable lifecycle. */
+    sta_ipv6_enabled = 0;
+    sta_ipv6_netif = NULL;
+
+#if LWIP_IPV6_MLD
+    netif_set_flags(netif, NETIF_FLAG_MLD6);
+#endif
+    netif_create_ip6_linklocal_address(netif, 1);
+#if LWIP_IPV6_AUTOCONFIG
+    netif_set_ip6_autoconfig_enabled(netif, 1);
+#endif
+
+#if LWIP_IPV6_DHCP6
+    err = dhcp6_enable_stateless(netif);
+    if (err != ERR_OK) {
+        netif_ip6_disable(netif);
+        return err;
+    }
+#else
+    err = ERR_OK;
+#endif
+
+    sta_ipv6_netif = netif;
+    sta_ipv6_enabled = 1;
+    nd6_restart_netif(netif);
+
+    return err;
+}
+
+static err_t net_al_disable_ipv6_core(struct netif *netif)
+{
+    LWIP_ASSERT_CORE_LOCKED();
+
+    netif_ip6_disable(netif);
+    sta_ipv6_enabled = 0;
+    sta_ipv6_netif = NULL;
+
+    return ERR_OK;
+}
+
+static err_t net_al_create_ip6_linklocal_address(int ipv6_enable)
+{
+    struct netif *netif = fhost_to_net_if(MGMR_VIF_STA);
+
+    if (ipv6_enable != 0 && ipv6_enable != 1) {
+        return ERR_ARG;
+    }
+    if (netif == NULL) {
+        printf("Fail to get netif.\r\n");
+        return ERR_IF;
+    }
+
+    return netifapi_netif_common(netif, NULL,
+            ipv6_enable ? net_al_enable_ipv6_core :
+                          net_al_disable_ipv6_core);
 }
 #endif
 
@@ -718,7 +762,7 @@ int net_al_ext_dhcp_connect(int is_api, uint32_t to_ms)
 
 #ifdef CFG_IPV6
 #if !IPV6_TIMER_PRECISE_NEEDED
-    net_al_create_ip6_linklocal_address(1);
+    (void)net_al_create_ip6_linklocal_address(1);
 #endif
 #endif
     return -3;
@@ -727,9 +771,9 @@ int net_al_ext_dhcp_connect(int is_api, uint32_t to_ms)
 int net_al_set_ipv6_enable(int enable)
 {
 #ifdef CFG_IPV6
-    net_al_create_ip6_linklocal_address(enable);
-    return 0;
+    return (int)net_al_create_ip6_linklocal_address(enable);
 #else
+    (void)enable;
     return -1;
 #endif
 
@@ -760,13 +804,6 @@ void net_al_ext_netif_status_callback(struct netif *netif)
             platform_post_event(EV_WIFI, CODE_WIFI_ON_LOST_IP, 0);
         } else if (netif_is_flag_set(netif, NETIF_FLAG_UP)){
             platform_post_event(EV_WIFI, CODE_WIFI_ON_GOT_IP, 0);
-
-#if MACSW_POWERSAVE
-            /* Resume coex runtime behaviors and re-enable Wi-Fi PS on reconnect */
-            if (ps_is_coex_mode()) {
-                ps_coex_wifi_ps_enable();
-            }
-#endif
         }
     }
     ip4_addr_copy(old_addr, *netif_ip4_addr(netif));

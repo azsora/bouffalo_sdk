@@ -32,6 +32,7 @@
 #include "board.h"
 #include "filesystem_reader.h"
 #include "log.h"
+#include "bl_mipi_dpi_v2.h"
 
 #if defined(CONFIG_FREERTOS)
 #include <FreeRTOS.h>
@@ -128,9 +129,21 @@ uint8_t dpi_parse_sof0(uint8_t *header, uint16_t *x, uint16_t *y, uint8_t *forma
     return 0;
 }
 
-/* External reference to the OSD ISR enable flag from bl_mipi_dpi_v2.c */
+/* Raised by MJDEC-done and consumed by the base-layer swap below. */
 volatile uint8_t dpi_mjdec_isr_enable_flag = 0;
 static volatile uint32_t osd_addr = 0;
+
+/* Strong override of the BSP's weak base-layer swap (bl_mipi_dpi_v2.c). Invoked
+ * from the OSD SEOF ISR: latch the freshly decoded YUV frame into the DPI base
+ * layer at the frame boundary, so the video background switches between frames. */
+void bl_mipi_dpi_v2_osd0_base_layer_swap(void)
+{
+    if (dpi_mjdec_isr_enable_flag) {
+        bflb_dpi_framebuffer_planar_switch(dpi_dev, mjdec_config.output_bufaddr0, mjdec_config.output_bufaddr1);
+        pic_count++;
+        dpi_mjdec_isr_enable_flag = 0;
+    }
+}
 
 /**
  * @brief MJDEC interrupt handler
@@ -210,10 +223,9 @@ volatile uint32_t *dpi_mjdec_get_pic_count(void)
  * @brief Initialize MJDEC only (DPI is initialized by lcd_init)
  *
  * Note: This function should be called AFTER lcd_init() since lcd_init()
- * will initialize the DPI hardware for YUV planar output when
- * LCD_DPI_V2_USE_OSD_LAYER_SWITCH is defined. The DPI configuration is
- * handled by bl_mipi_dpi_v2_init() in the BSP layer using parameters from
- * lcd_conf_user.h (STANDARD_DPI_W, STANDARD_DPI_H, timing params, etc.)
+ * initializes the DPI hardware for YUV planar output (OSD0 overlay path). The
+ * DPI configuration is handled by bl_mipi_dpi_v2_init() in the BSP layer using
+ * parameters from lcd_conf_user.h (STANDARD_DPI_W, STANDARD_DPI_H, timing params, etc.)
  *
  * @return int 0 on success, negative value on error
  */
@@ -235,11 +247,13 @@ int dpi_manager_init(void)
         return -3;
     }
 
-    /* Get OSD device */
-    osd_dev = bflb_device_get_by_name(BFLB_NAME_OSD1);
+    /* Get OSD0 device used by LVGL */
+    osd_dev = bflb_device_get_by_name(BFLB_NAME_OSD0);
     if (osd_dev == NULL) {
         return -4;
     }
+    /* The base-layer swap is wired via the weak-override bl_mipi_dpi_v2_osd0_base_layer_swap()
+     * above; no explicit callback registration needed. */
 
 #if (DPI_PIXEL_CLOCK_USE_SW_GPIO)
     dpi_pixel_clock_output();

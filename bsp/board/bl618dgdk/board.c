@@ -535,8 +535,7 @@ void bflb_wfa_init(void)
     extern void interrupt1_handler(void);
     bflb_irq_attach(MAC_INT_PROT_TRIGGER_IRQn, (irq_callback)interrupt1_handler, NULL);
     bflb_irq_enable(MAC_INT_PROT_TRIGGER_IRQn);
-    extern void csi_vic_set_prio(int32_t IRQn, uint32_t priority);
-    csi_vic_set_prio(MAC_INT_PROT_TRIGGER_IRQn, 2);
+    bflb_irq_set_priority(MAC_INT_PROT_TRIGGER_IRQn, 2, 2);
 }
 #endif
 
@@ -633,6 +632,11 @@ void board_init(void)
     bflb_wfa_init();
 #endif
 
+    /* Release GPIO33 left by boot2 UART TX log to free UART SIG9. */
+    struct bflb_device_s *gpio;
+    gpio = bflb_device_get_by_name("gpio");
+    bflb_gpio_deinit(gpio, GPIO_PIN_33);
+
     /* console init (uart or wo) */
     console_init();
 
@@ -645,7 +649,9 @@ void board_init(void)
     ram_heap_init();
 
     /* boot info dump */
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
     /* version info dump */
     bl_show_component_version();
 
@@ -721,7 +727,9 @@ void board_init(void)
     /* ram and heap init (including psram) */
     ram_heap_init();
 
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
 
     printf("uart  sig1:%08x, sig2:%08x\r\n", getreg32(GLB_BASE + GLB_UART_CFG1_OFFSET),
            getreg32(GLB_BASE + GLB_UART_CFG2_OFFSET));
@@ -749,7 +757,9 @@ void board_init(void)
     /* heap init */
     ram_heap_init();
 
+#ifndef CONFIG_BOARD_SHOW_LOG_DISABLE
     bl_show_log();
+#endif
 
     //printf("lp does not use memheap due to little ram \r\n");
 

@@ -29,9 +29,17 @@ void wifi_sta_ps_on_cmd(int argc, char *argv[]);
 void wifi_sta_ps_off_cmd(int argc, char *argv[]);
 void wifi_sta_ps_set_cmd(int argc, char **argv);
 void wifi_coex_enable_cmd(int argc, char *argv[]);
+void wifi_ap_coex_enable_cmd(int argc, char *argv[]);
 void wifi_coex_disable_cmd(int argc, char *argv[]);
 void wifi_coex_duty_set_cmd(int argc, char **argv);
 void wifi_coex_status_cmd(int argc, char **argv);
+#ifdef BL618DG
+void wifi_coex_bt_spdt_cmd(int argc, char **argv);
+void wifi_coex_bt_adj_pwr_cmd(int argc, char **argv);
+void wifi_coex_bt_adj_pwr_off_cmd(int argc, char **argv);
+void wifi_coex_bt_overlay_cmd(int argc, char **argv);
+void wifi_coex_bt_overlay_off_cmd(int argc, char **argv);
+#endif
 void wifi_sta_info_cmd(int argc, char *argv[]);
 void wifi_ap_sta_list_get_cmd(int argc, char *argv[]);
 void wifi_ap_sta_delete_cmd(int argc, char *argv[]);

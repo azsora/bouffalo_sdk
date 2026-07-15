@@ -2407,7 +2407,11 @@ int bt_conn_get_remote_dev_info(struct bt_conn_info *info)
     int link_num = 0;
 
     for (int i = 0; i < CONFIG_BT_MAX_CONN; i++) {
+#if defined(BFLB_BLE_PATCH_FILTER_CONN_INFO_CONNECTED_LE)
+        if ((!atomic_get(&conns[i].ref)) || (conns[i].state != BT_CONN_CONNECTED)) {
+#else
         if ((!atomic_get(&conns[i].ref)) || (conns[i].state == BT_CONN_DISCONNECTED)) {
+#endif /* BFLB_BLE_PATCH_FILTER_CONN_INFO_CONNECTED_LE */
                 continue;
         }
         if(info)

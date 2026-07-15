@@ -1,5 +1,81 @@
 # CHANGELOG
 
+## v2.3.29 — since v2.3.28 (2026-06-26 → 2026-07-15)
+
+### New Features
+
+- **BL618DG**
+  - Consolidated BZ coexistence demo
+
+- **Camera**
+  - Added BF3901 sensor and PEC DVP CAM capture support
+
+- **WiFi**
+  - Added BLE WiFi coexistence tests (WFA)
+  - Added P2P (WiFi Direct) feature
+
+- **Networking**
+  - Optimized IPv6 support for low power scenarios
+
+- **Display**
+  - Improved LVGL demo cases and DSI screen support
+
+- **BL616CL**
+  - Added GPIO interrupt watchdog test case
+
+- **Debug / Tools**
+  - Updated OpenOCD to support CJTAG
+  - Board serial log output can now be disabled
+
+- **Manufacturing**
+  - Added TX power compensation support in MFG mode
+
+### Bug Fixes
+
+- **WiFi**
+  - Adapted SPI WiFi fake write API
+  - Fixed TWT tick calculation
+  - Fixed WFA IRQ priority setup for BL618DG B0
+  - Fixed UART signal issue after boot2 log output
+  - Fixed support for more chip variants in WiFi low power flash config
+
+- **Audio**
+  - Fixed loop playback crash
+
+- **Low Power**
+  - Refined RC32K coarse calibration
+
+- **Build System**
+  - Fixed `make` and `ninja` first-time build failure
+  - Fixed compilation issues for SDIO/IPC on BL602 and BL618DG
+  - Fixed compilation issue for BL616CL
+  - Fixed various build failures
+
+- **BL618DG**
+  - Fixed WiFi-BLE switching in MFG mode
+  - Fixed power offset issue when no channel switch occurs in MFG
+
+- **WS2812**
+  - Fixed WS2812 LEDs only displaying blue
+
+### Improvements
+
+- **WiFi**
+  - Consolidated P2P code paths, retired legacy `CONFIG_WL80211_P2P` config
+  - Optimized WiFi TCP throughput
+  - Added WPA failure point logging for easier debugging
+  - Removed legacy "FW0" residue references throughout codebase
+
+- **BL618DG**
+  - Updated MFG version to 0.5
+  - Added RCAL RF parameter
+  - Separated lpfw_private library for ILP32D
+  - Demo now selects standalone or combo path based on macro
+
+- **System**
+  - Updated hibooster startup method
+  - Updated linker flash rodata object patterns
+
 ## v2.3.28 — since v2.3.27 (2026-06-07 → 2026-06-26)
 
 ### New Features

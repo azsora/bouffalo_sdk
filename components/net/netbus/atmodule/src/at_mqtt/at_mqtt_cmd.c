@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <FreeRTOS.h>
+#include <semphr.h>
 #include "at_main.h"
 #include "at_core.h"
 #include "at_pal.h"
@@ -30,6 +32,7 @@
 #include "mbedtls/x509_crt.h"
 #include "mbedtls/net_sockets.h"
 #include "at_net_ssl.h"
+#include "at_net_main.h"
 #include "at_fs.h"
 
 #define AT_MQTT_LINK_MAX      (1)
@@ -54,6 +57,9 @@
 #define AT_MQTT_USERNAME_MAX_LEN         128
 #define AT_MQTT_PASSWD_MAX_LEN           128
 #define AT_MQTT_BNUFFER_SIZE_MAX         (3*1024)
+#define AT_MQTT_SOCKET_FD_INVALID        (-1)
+#define AT_MQTT_SOCKET_FD_IS_VALID(fd)   ((fd) >= LWIP_SOCKET_OFFSET && \
+                                          (fd) < (LWIP_SOCKET_OFFSET + MEMP_NUM_NETCONN))
 #define _at_offset(type, member) ((size_t) &((type *)0)->member)
 
 #define _at_container_of(ptr, type, member) \
@@ -91,10 +97,24 @@ typedef struct at_mqtt {
         char *topic;
         uint8_t qos;
     } sub_topic[AT_MQTT_SUB_TOPIC_MAX];
-
+    SemaphoreHandle_t mutex;
 } at_mqtt_t;
 
 static __attribute__((section(".wifi_ram."))) at_mqtt_t g_at_mqtt[AT_MQTT_LINK_MAX];
+
+static void mqtt_socket_lock(at_mqtt_t *mqtt)
+{
+    if (mqtt) {
+        xSemaphoreTake(mqtt->mutex, portMAX_DELAY);
+    }
+}
+
+static void mqtt_socket_unlock(at_mqtt_t *mqtt)
+{
+    if (mqtt) {
+        xSemaphoreGive(mqtt->mutex);
+    }
+}
 
 static int at_ssl_sni_set(int linkid, const char *sni)
 {
@@ -195,6 +215,12 @@ static int initserver_tls(ssl_param_t **ctx, const char* addr, const char* port,
     mbedtls_net_context net_ctx;
     ssl_conn_param_t ssl_param = {0};
 
+    /* Always start from a clean output handle. Otherwise an early failure
+     * (e.g. TCP connect to an unreachable IP returns before *ctx is assigned)
+     * would leave the caller's ctx pointing at a stale/dangling ssl context
+     * from a previous connection, which later gets dereferenced. */
+    *ctx = NULL;
+
     net_ctx.fd = initserver_tcp(addr, port);
     if (net_ctx.fd < 0) {
         printf("TCP connect fail:%d\r\n", net_ctx.fd);
@@ -208,7 +234,7 @@ static int initserver_tls(ssl_param_t **ctx, const char* addr, const char* port,
 
     at_load_file(at_mqtt_config->ssl_conf.ca_file, &ssl_param.ca_cert, &ssl_param.ca_cert_len);
     at_load_file(at_mqtt_config->ssl_conf.cert_file, &ssl_param.own_cert, &ssl_param.own_cert_len);
-    at_load_file(at_mqtt_config->ssl_conf.key_file, &ssl_param.private_cert, &ssl_param.private_cert_len);
+    at_net_ssl_load_file_decrypt(at_mqtt_config->ssl_conf.key_file, &ssl_param.private_cert, &ssl_param.private_cert_len);
     ssl_param.alpn = (char **)alpn;
     ssl_param.alpn_num = alpn_num;
     ssl_param.sni = (char *)sni;
@@ -222,12 +248,16 @@ static int initserver_tls(ssl_param_t **ctx, const char* addr, const char* port,
         printf("mbedtls_ssl_connect handle NULL, fd:%d\r\n", net_ctx.fd);
         close(net_ctx.fd);
         net_ctx.fd = -1;
-    }
-
-    rv = mbedtls_net_set_nonblock(&net_ctx);
-    if (rv != 0) {
-        close(net_ctx.fd);
-        net_ctx.fd = -1;
+    } else {
+        rv = mbedtls_net_set_nonblock(&net_ctx);
+        if (rv != 0) {
+            /* Tear down the ssl context we just created, otherwise it leaks
+             * and *ctx would dangle after we return failure. */
+            mbedtls_ssl_close(*ctx);
+            close(net_ctx.fd);
+            net_ctx.fd = -1;
+            *ctx = NULL;
+        }
     }
     //mbedtls_ssl_conf_read_timeout(&(*ctx)->conf, 200);
 
@@ -242,6 +272,13 @@ static int open_nb_socket(struct custom_socket_handle *sockfd, int linkid, uint8
 {
     int ret = -1;
 
+    sockfd->type = type;
+    if (type == MQTTC_PAL_CONNTION_TYPE_TCP) {
+        sockfd->ctx.fd = AT_MQTT_SOCKET_FD_INVALID;
+    } else {
+        sockfd->ctx.ssl_ctx = NULL;
+    }
+
     switch (type)
     {
       case MQTTC_PAL_CONNTION_TYPE_TCP:
@@ -255,7 +292,7 @@ static int open_nb_socket(struct custom_socket_handle *sockfd, int linkid, uint8
                                        (const char *)at_ssl_sni_get(linkid), 
                                        (const char **)g_at_mqtt[linkid].ssl_alpn, 
                                         g_at_mqtt[linkid].ssl_alpn_num);
-        if (ret > 0) {
+        if (AT_MQTT_SOCKET_FD_IS_VALID(ret)) {
             sockfd->ctx.ssl_ctx = &g_at_mqtt[linkid].ctx->ssl;
         } else {
             sockfd->ctx.ssl_ctx = NULL;
@@ -264,7 +301,7 @@ static int open_nb_socket(struct custom_socket_handle *sockfd, int linkid, uint8
         break;
 
       default:
-        sockfd->ctx.fd = -1;
+        sockfd->ctx.fd = AT_MQTT_SOCKET_FD_INVALID;
         break;
     }
 
@@ -273,34 +310,46 @@ static int open_nb_socket(struct custom_socket_handle *sockfd, int linkid, uint8
         return -1;
     }
 
-    /* Set client connection type */
-
-    sockfd->type = type;
-
     return 0;
 }
 
 static void client_refresher_task(void* arg);
 
-static void socketfd_close(mqtt_pal_socket_handle sockfd)
+static void socketfd_close(int linkid, mqtt_pal_socket_handle sockfd)
 {
-    if (sockfd->type == MQTTC_PAL_CONNTION_TYPE_TCP && sockfd->ctx.fd > 0) {
+    /* socketfd_close may be invoked concurrently from the AT command context
+     * and from the refresher task. Without serialization the two paths can
+     * read the same fd before either clears it and both call close() on it
+     * (double close), which frees a netconn still owned by another socket
+     * (e.g. fd 0 = the net loopback wake socket) and corrupts it. Serialize
+     * here. */
+    mqtt_socket_lock(&g_at_mqtt[linkid]);
+
+    if (sockfd->type == MQTTC_PAL_CONNTION_TYPE_TCP && AT_MQTT_SOCKET_FD_IS_VALID(sockfd->ctx.fd)) {
         close(sockfd->ctx.fd);
-        sockfd->ctx.fd = 0;
+        sockfd->ctx.fd = AT_MQTT_SOCKET_FD_INVALID;
     }
 
     if (sockfd->type == MQTTC_PAL_CONNTION_TYPE_TLS && sockfd->ctx.ssl_ctx) {
         ssl_param_t *ssl_param = (ssl_param_t *)_at_container_of(sockfd->ctx.ssl_ctx, ssl_param_t, ssl);
+        int tls_fd = ssl_param->net.fd;
+
         mbedtls_ssl_close(ssl_param);
-        close(ssl_param->net.fd);
-        ssl_param->net.fd = 0;
+        if (AT_MQTT_SOCKET_FD_IS_VALID(tls_fd)) {
+            close(tls_fd);
+        }
         sockfd->ctx.ssl_ctx = NULL;
+        if (linkid >= 0 && linkid < AT_MQTT_LINK_MAX && g_at_mqtt[linkid].ctx == ssl_param) {
+            g_at_mqtt[linkid].ctx = NULL;
+        }
     }
+
+    mqtt_socket_unlock(&g_at_mqtt[linkid]);
 }
 
 static uint8_t socketfd_is_connected(mqtt_pal_socket_handle sockfd)
 {
-    if (sockfd->type == MQTTC_PAL_CONNTION_TYPE_TCP && sockfd->ctx.fd > 0) {
+    if (sockfd->type == MQTTC_PAL_CONNTION_TYPE_TCP && AT_MQTT_SOCKET_FD_IS_VALID(sockfd->ctx.fd)) {
         return 1;
     }
 
@@ -318,6 +367,13 @@ static void mqtt_buf_free(at_mqtt_t *pat_mqtt)
     pat_mqtt->p_recvbuf = NULL;
 }
 
+static void mqtt_wait_refresher_exit(int linkid)
+{
+    for (int i = 0; i < 20 && g_at_mqtt[linkid].client_task != NULL; i++) {
+        vTaskDelay(50);
+    }
+}
+
 /**
  * @brief Safelty closes the \p sockfd and cancels the \p client_daemon before \c exit.
  */
@@ -326,7 +382,7 @@ static void mqtt_close(int linkid)
     if (socketfd_is_connected(&g_at_mqtt[linkid].sockfd)) {
         at_response_string("+MQTT:DISCONNECTED,%d\r\n", linkid);
     }
-    socketfd_close(&g_at_mqtt[linkid].sockfd);
+    socketfd_close(linkid, &g_at_mqtt[linkid].sockfd);
 
     g_at_mqtt[linkid].state = AT_MQTT_STATE_DISCONNECT;
     
@@ -377,7 +433,7 @@ static void reconnect_client(struct mqtt_client* client, void **reconnect_state_
         if (socketfd_is_connected(client->socketfd)) {
             at_response_string("+MQTT:DISCONNECTED,%d\r\n", 0);
         }
-        socketfd_close(client->socketfd);
+        socketfd_close(0, client->socketfd);
 
         reconnect_state->state = AT_MQTT_STATE_DISCONNECT;
     }
@@ -936,8 +992,13 @@ static int at_setup_cmd_mqttconn(int argc, const char **argv)
            g_at_mqtt[linkid].user_name, g_at_mqtt[linkid].password);
 
     if (g_at_mqtt[linkid].p_sendbuf || g_at_mqtt[linkid].p_recvbuf) {
-        printf("mqtt buffer not free\r\n");
-        return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
+        if (g_at_mqtt[linkid].client_task == NULL) {
+            printf("mqtt buffer not free (task exited), force clearing\r\n");
+            mqtt_buf_free(&g_at_mqtt[linkid]);
+        } else {
+            printf("mqtt buffer not free\r\n");
+            return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
+        }
     }
 
     g_at_mqtt[linkid].p_sendbuf = at_calloc(AT_MQTT_BNUFFER_SIZE_MAX, 1);
@@ -1059,7 +1120,7 @@ static int at_setup_cmd_mqttpub(int argc, const char **argv)
     if (retain) {
         publish_flags |= MQTT_PUBLISH_RETAIN;
     }
-   
+
     if (mqtt_publish(&g_at_mqtt[linkid].client, (const char *)topic_name, msg, strlen(msg), publish_flags) != MQTT_OK) {
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_CMD_EXEC_FAIL);
     }
@@ -1112,7 +1173,7 @@ static int at_setup_cmd_mqttpubraw(int argc, const char **argv)
     if (retain) {
         publish_flags |= MQTT_PUBLISH_RETAIN;
     }
- 
+
     buffer = at_malloc(length + 1);
     if (!buffer) {
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_NO_MEMORY);
@@ -1262,16 +1323,26 @@ static int at_setup_cmd_mqttclean(int argc, const char **argv)
     if (mqtt_linkid_valid(linkid)) {
         return AT_RESULT_WITH_SUB_CODE(AT_SUB_HANDLE_INVALID);
     }
-    if (!socketfd_is_connected(&g_at_mqtt[linkid].sockfd)) {
-        return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
-    }
-
-    if (mqtt_disconnect(&g_at_mqtt[linkid].client) == MQTT_OK) {
+    if (socketfd_is_connected(&g_at_mqtt[linkid].sockfd) &&
+        mqtt_disconnect(&g_at_mqtt[linkid].client) == MQTT_OK) {
         mqtt_sync(&g_at_mqtt[linkid].client);
     }
 
-    mqtt_handle_clear(linkid);
     mqtt_close(linkid);
+    g_at_mqtt[linkid].refresher_run = 0;
+    mqtt_wait_refresher_exit(linkid);
+
+    if (g_at_mqtt[linkid].client_task != NULL) {
+        printf("mqtt_clean: refresher task still running\r\n");
+        return AT_RESULT_WITH_SUB_CODE(AT_SUB_NOT_ALLOWED);
+    }
+
+    if (g_at_mqtt[linkid].p_sendbuf || g_at_mqtt[linkid].p_recvbuf) {
+        printf("mqtt_clean: force freeing stale buffers\r\n");
+        mqtt_buf_free(&g_at_mqtt[linkid]);
+    }
+
+    mqtt_handle_clear(linkid);
     return AT_RESULT_CODE_OK;
 }
 
@@ -1368,25 +1439,27 @@ static int at_query_cmd_mqttsni(int argc, const char **argv)
 }
 
 static const at_cmd_struct at_mqtt_cmd[] = {
-    {"+MQTTUSERCFG",  at_query_cmd_mqttusercfg, at_setup_cmd_mqttusercfg, NULL, 3, 8},
+    {"+MQTTUSERCFG", at_query_cmd_mqttusercfg, at_setup_cmd_mqttusercfg, NULL, 3, 8},
     {"+MQTTCLIENTID", at_query_cmd_mqttclientid, at_setup_cmd_mqttclientid, NULL, 2, 2},
     {"+MQTTUSERNAME", at_query_cmd_mqttusername, at_setup_cmd_mqttusername, NULL, 2, 2},
     {"+MQTTPASSWORD", at_query_cmd_mqttpassword, at_setup_cmd_mqttpassword, NULL, 2, 2},
-    {"+MQTTCONNCFG",  at_query_cmd_mqttconncfg, at_setup_cmd_mqttconncfg, NULL, 7, 7},
-    {"+MQTTCONN",     at_query_cmd_mqttconn, at_setup_cmd_mqttconn, NULL, 4, 4},
-    {"+MQTTALPN",     at_query_cmd_mqttalpn, at_setup_cmd_mqttalpn, NULL, 2, 8},
-    {"+MQTTSNI",      at_query_cmd_mqttsni, at_setup_cmd_mqttsni, NULL, 2, 2},
-    {"+MQTTPUB",      NULL, at_setup_cmd_mqttpub, NULL, 5, 5},
-    {"+MQTTPUBRAW",   NULL, at_setup_cmd_mqttpubraw, NULL, 5, 5},
-    {"+MQTTSUB",      at_query_cmd_mqttsub, at_setup_cmd_mqttsub, NULL, 3, 3},
-    {"+MQTTUNSUB",    NULL, at_setup_cmd_mqttunsub, NULL, 2, 2},
-    {"+MQTTCLEAN",    NULL, at_setup_cmd_mqttclean, NULL, 1, 1},
-    {NULL,              NULL, NULL, NULL, 0, 0},
+    {"+MQTTCONNCFG", at_query_cmd_mqttconncfg, at_setup_cmd_mqttconncfg, NULL, 7, 7},
+    {"+MQTTCONN", at_query_cmd_mqttconn, at_setup_cmd_mqttconn, NULL, 4, 4},
+    {"+MQTTALPN", at_query_cmd_mqttalpn, at_setup_cmd_mqttalpn, NULL, 2, 8},
+    {"+MQTTSNI", at_query_cmd_mqttsni, at_setup_cmd_mqttsni, NULL, 2, 2},
+    {"+MQTTPUB", NULL, at_setup_cmd_mqttpub, NULL, 5, 5},
+    {"+MQTTPUBRAW", NULL, at_setup_cmd_mqttpubraw, NULL, 5, 5},
+    {"+MQTTSUB", at_query_cmd_mqttsub, at_setup_cmd_mqttsub, NULL, 3, 3},
+    {"+MQTTUNSUB", NULL, at_setup_cmd_mqttunsub, NULL, 2, 2},
+    {"+MQTTCLEAN", NULL, at_setup_cmd_mqttclean, NULL, 1, 1},
+    {NULL, NULL, NULL, NULL, 0, 0},
 };
 
 int at_mqtt_init()
 {
     for (int i = 0; i < AT_MQTT_LINK_MAX; i++) {
+        g_at_mqtt[i].mutex = xSemaphoreCreateMutex();
+        g_at_mqtt[i].sockfd.ctx.fd = AT_MQTT_SOCKET_FD_INVALID;
         g_at_mqtt[i].connect_flags = MQTT_CONNECT_CLEAN_SESSION;
 
         g_at_mqtt[i].client.publish_response_callback_state = (void *)i;
@@ -1410,4 +1483,3 @@ bool at_mqtt_cmd_regist(void)
     else
         return false;
 }
-

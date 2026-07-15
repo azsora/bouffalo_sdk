@@ -363,6 +363,11 @@ ATTR_FAST_RAM_SECTION void usbh_video_dma_lli_fill(uint32_t desc_index, uint32_t
 
 ATTR_FAST_RAM_SECTION void usbh_video_dma_start(void)
 {
+    if (!dma_usb) {
+        UVC_ERR("dma_usb is NULL\r\n");
+        return;
+    }
+
     bflb_dma_feature_control(dma_usb, DMA_CMD_SET_LLI_CONFIG, (uint32_t)&dma_uvc_lli_pool[0]);
     bflb_dma_channel_start(dma_usb);
 
@@ -373,11 +378,21 @@ ATTR_FAST_RAM_SECTION void usbh_video_dma_start(void)
 
 ATTR_FAST_RAM_SECTION void usbh_video_dma_stop(void)
 {
+    if (!dma_usb) {
+        UVC_ERR("dma_usb is NULL\r\n");
+        return;
+    }
+
     bflb_dma_channel_stop(dma_usb);
 }
 
 ATTR_FAST_RAM_SECTION bool usbh_video_dma_isbusy(void)
 {
+    if (!dma_usb) {
+        UVC_ERR("dma_usb is NULL\r\n");
+        return false;
+    }
+
     return bflb_dma_channel_isbusy(dma_usb);
 }
 

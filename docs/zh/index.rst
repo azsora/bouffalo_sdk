@@ -18,6 +18,7 @@ BouffaloSDK 使用指南
    get_started/cmake
    get_started/flash_cube
    get_started/repo
+   get_started/menuconfig_guide
 
 .. toctree::
    :maxdepth: 1
@@ -37,12 +38,13 @@ BouffaloSDK 使用指南
    samples/peripherals/index
    samples/btble/index
    samples/wifi6/index
+   AT 命令介绍 <samples/atmoudle/atmoudle>
 
 .. toctree::
    :maxdepth: 1
    :caption: 调试
 
-    debug/backtrace
+   debug/backtrace
 
 .. toctree::
    :maxdepth: 1

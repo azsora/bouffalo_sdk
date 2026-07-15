@@ -124,7 +124,7 @@ static void atspisync_fakepush_forpop_cmd(int argc, char **argv)
 
     buf_len = spisync_fakewrite_forread(at_spisync, &msg, 0);
 #else
-    buf_len = nxspi_fakewrite_forread(buf, buf_len, 0);
+    buf_len = nxspi_fakewrite_forread(NXSPI_TYPE_AT, buf, buf_len, 0);
 #endif
 
     printf("fakewrite len:%d, hascrlf:%d\r\n", buf_len, hascrlf);

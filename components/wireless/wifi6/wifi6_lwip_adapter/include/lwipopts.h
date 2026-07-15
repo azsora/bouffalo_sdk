@@ -307,6 +307,9 @@ extern int * __errno(void);
 #define ARP_TIMER_PRECISE_NEEDED        1
 #define IP4_FRAG_TIMER_PRECISE_NEEDED   1
 #define DNS_TIMER_PRECISE_NEEDED        1
+#ifdef CFG_IPV6
+#define IPV6_TIMER_PRECISE_NEEDED       1
+#endif
 #endif
 
 #endif /* LWIP_HDR_LWIPOPTS_H__ */

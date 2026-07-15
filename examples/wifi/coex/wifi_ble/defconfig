@@ -9,6 +9,9 @@ CONFIG_BFLB_MTD =y
 CONFIG_PARTITION =y
 CONFIG_LITTLEFS =y
 
+# iperf for coex throughput test
+CONFIG_WIFI_IPERF =y
+
 # ble
 CONFIG_BLUETOOTH =y
 CONFIG_BT_SETTINGS =y

@@ -23,17 +23,13 @@
 #include <flash_ops_rpmsg.h>
 #endif
 
-#ifdef BL618DG
-#define OTA_PARTITION_NAME_TYPE_FW    "FW0"
-#else
 #define OTA_PARTITION_NAME_TYPE_FW    "FW"
-#endif
 #define OTA_UPGRADE_RETRY 1
 #define OTA_DEBUG_IMG 0
 #define OTA_ERASE_BLOCK_SIZE (4*1024)
 
 static ATTR_NOCACHE_NOINIT_RAM_SECTION __attribute__((aligned(32))) struct bflb_sha256_link_ctx_s _sha_ctx;
-    
+
 #ifdef CONFIG_OTA_VERSION_CHECK
 #ifdef CONFIG_OTA_VERSION_PREFIX
 #define OTA_VERSION_PREFIX CONFIG_OTA_VERSION_PREFIX

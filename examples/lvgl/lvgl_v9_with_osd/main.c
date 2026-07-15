@@ -2,16 +2,11 @@
  * @file main.c
  * @brief SD-card JPEG video (background) + LVGL v9 UI (OSD overlay).
  *
- * The whole chain bring-up is done by lcd_init()
- * via the bsp/common/lcd DSI panel driver selected in lcd_conf_user.h, so this
- * project has no dependency on chiptest's dsi_common. dpi_manager only owns the
- * DPI background + OSD overlay + MJDEC decode.
- *
- * Tasks:
+ * Display bring-up is all in lcd_init() (bsp/common/lcd panel driver per lcd_conf_user.h);
+ * dpi_manager owns only the video background + MJDEC decode. Tasks:
  *   - filesystem_reader_task : read /sd/<res>/CCC/pNNNN.jpg into a 2-buffer queue
- *   - image_switch_task      : MJDEC-decode frames into ping-pong YUV, DPI shows them
- *   - lvgl_task              : SquareLine UI rendered into a transparent ARGB8888
- *                              OSD overlay, hardware-composited over the video
+ *   - image_switch_task      : MJDEC-decode frames into ping-pong YUV, shown as background
+ *   - lvgl_task              : SquareLine UI on a transparent OSD overlay, composited on top
  */
 
 #include "board.h"
@@ -32,9 +27,9 @@
 
 #if (LCD_INTERFACE_TYPE == LCD_INTERFACE_DPI)
 #include "bl618dg_glb.h" /* GLB_Set_Display_CLK for the DPI pixel clock */
-#else
-// use benchmark for now
-// #include "ui.h" /* SquareLine UI; CMake picks UICODE480/UICODE720 per DSI panel */
+#endif
+#if defined(LVGL_WITH_SQUARELINE_UI) && LVGL_WITH_SQUARELINE_UI
+#include "ui.h" /* SquareLine UI; CMake picks the matching UICODE folder per panel */
 #endif
 
 #define DBG_TAG "MAIN"
@@ -45,11 +40,9 @@
 #define IMG_TASK_STACK   2048
 #define LVGL_TASK_STACK  4096 /* 16KB */
 
-/* The LVGL draw buffers (the OSD overlay canvases) and the display flush/swap
- * path are owned by the framework port (components/.../lv_port_disp_rgb.c). It
- * calls lcd_init() -> the DSI panel bring-up, registers the flush callback that
- * drives lcd_screen_switch() (-> mipi_dsi_v2 OSD swap), and rotates the triple
- * buffers from the OSD SEOF interrupt. This file only owns the video pipeline. */
+/* The LVGL draw buffers (OSD overlay) and the flush/swap path live in the framework port
+ * (lv_port_disp_rgb.c): it calls lcd_init(), wires flush -> lcd_screen_switch() (OSD swap),
+ * and rotates the buffers from the SEOF interrupt. This file only owns the video pipeline. */
 
 static uint32_t lv_tick_cb(void)
 {
@@ -64,20 +57,31 @@ static void lv_log_cb(lv_log_level_t level, const char *buf)
 }
 #endif
 
-/* Full-screen video: the SquareLine UI runs on a transparent screen background
- * so the DSI video (DPI background layer) shows through everywhere, with the
- * widgets floating on top as an opaque HUD on the OSD overlay. */
+/* The SquareLine UI runs on a transparent screen background so the video (background layer)
+ * shows through, with the widgets floating on top as an opaque HUD on the OSD overlay. */
 
-/* Panel hardware scan-out frame rate: the LCD framework fires a CYCLE callback
- * from the OSD SEOF interrupt once per scanned frame, so counting it gives the
- * true physical refresh rate (= pixel_clock / (Htotal * Vtotal)), independent of
- * how fast LVGL renders or the video decodes. The ISR only increments; lvgl_task
- * prints the rate once a second. */
+/* Panel hardware scan-out rate: the framework fires a CYCLE callback per scanned frame (OSD
+ * SEOF), so counting it gives the true refresh rate, independent of LVGL/video. The ISR only
+ * increments; lvgl_task prints it once a second. */
 static volatile uint32_t scan_frame_count = 0;
 
 static void panel_scan_cycle_cb(void)
 {
     scan_frame_count++;
+}
+
+/* The OSD scan-out engine reads LVGL's framebuffer directly from memory, so keep the
+ * just-rendered case buffer coherent before the framework port switches the screen. */
+static void lvgl_osd_flush_cache_cb(lv_event_t *e)
+{
+    lv_display_t *disp = (lv_display_t *)lv_event_get_target(e);
+    lv_draw_buf_t *draw_buf = lv_display_get_buf_active(disp);
+
+    if (draw_buf == NULL || draw_buf->data == NULL || draw_buf->data_size == 0) {
+        return;
+    }
+
+    bflb_l1c_dcache_clean_range(draw_buf->data, draw_buf->data_size);
 }
 
 static void lvgl_task(void *param)
@@ -91,25 +95,27 @@ static void lvgl_task(void *param)
     lv_log_register_print_cb(lv_log_cb);
 #endif
 
-    /* Framework display port: brings up the whole DSI display side via lcd_init()
-     * (panel link + DPI background + OSD0 overlay + OSD interrupt, all in
-     * mipi_dsi_v2), creates the LVGL display with its triple draw buffers, and
-     * wires flush -> lcd_screen_switch() -> OSD swap (SEOF-interrupt synced). */
-    lv_port_disp_init();
+    /* Framework display port: brings up the whole display side via lcd_init(), creates the
+     * LVGL display with its triple draw buffers, and wires flush -> lcd_screen_switch() (OSD swap). */
+    lv_display_t *disp = lv_port_disp_init();
+    lv_display_add_event_cb(disp, lvgl_osd_flush_cache_cb, LV_EVENT_FLUSH_START, NULL);
 
     /* Count SEOF scan-out frames to report the panel's true hardware refresh rate. */
     lcd_frame_callback_register(FRAME_INT_TYPE_CYCLE, panel_scan_cycle_cb);
 
+#if defined(LVGL_WITH_SQUARELINE_UI) && LVGL_WITH_SQUARELINE_UI
+    ui_init();
+    // lv_demo_benchmark();
+#else
     lv_demo_benchmark();
-    // ui_init();
+#endif
 
     /* Make the screen background transparent so the video shows through, leaving
      * the widgets as an opaque HUD. Set AFTER ui_init()'s lv_screen_load(). */
-    lv_obj_set_style_bg_opa(lv_screen_active(), 100, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(lv_layer_top(), 100, LV_PART_MAIN);
-
+    lv_obj_set_style_bg_opa(lv_screen_active(), 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(lv_layer_top(), 0, LV_PART_MAIN);
     // struct bflb_device_s *osd0 = bflb_device_get_by_name("osd0");
-    // bflb_osd_blend_set_global_a(osd0, true, 0x50);
+    // bflb_osd_blend_set_global_a(osd0, true, 0x10);
 
 #if defined(LCD_BACKLIGHT_EN) && LCD_BACKLIGHT_EN
     /* Render the first frame before enabling the backlight so power-up never
@@ -123,7 +129,6 @@ static void lvgl_task(void *param)
     uint32_t scan_last = scan_frame_count;
     while (1) {
         lv_task_handler();
-
         uint32_t now = (uint32_t)bflb_mtimer_get_time_ms();
         if (now - scan_t0 >= 1000) {
             uint32_t cnt = scan_frame_count;
@@ -141,20 +146,14 @@ int main(void)
     board_init();
 
 #if (LCD_INTERFACE_TYPE == LCD_INTERFACE_DPI)
-    /* DPI parallel-RGB bring-up. lcd_init() (-> bl_mipi_dpi_v2_init in OSD-layer
-     * mode, run later by lv_port_disp_init()) does NOT mux the RGB pins or set the
-     * pixel clock itself, so do it here before any task starts (same as
-     * lvgl_v8_with_osd's main). board_dpi_gpio_init() muxes the RGB data/sync pins;
-     * pins 0..3 are the remaining data lines it does not cover. */
+    /* DPI parallel-RGB bring-up: lcd_init() does NOT mux the RGB pins or set the pixel clock,
+     * so do it here before any task starts. board_dpi_gpio_init() muxes the RGB data/sync pins;
+     * pins 0..3 are the remaining data lines it doesn't cover. */
     {
-        struct bflb_device_s *gpio = bflb_device_get_by_name("gpio");
         board_dpi_gpio_init();
-        bflb_gpio_init(gpio, GPIO_PIN_0, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-        bflb_gpio_init(gpio, GPIO_PIN_1, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-        bflb_gpio_init(gpio, GPIO_PIN_2, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-        bflb_gpio_init(gpio, GPIO_PIN_3, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
+        
         /* DPI pixel clock */
-        GLB_Set_Display_CLK(1, GLB_DP_CLK_WIFIPLL_96M, 1);
+        GLB_Set_Display_CLK(1, GLB_DP_CLK_WIFIPLL_96M, 3); //1024x600 div=1
         
     }
     LOG_I("DPI(standard RGB) + LVGL OSD: SD video background + LVGL benchmark overlay\r\n");
@@ -165,11 +164,9 @@ int main(void)
           (unsigned long)(board_psram_size_get() / (1024 * 1024)),
           (unsigned long)(CONFIG_PSRAM_FOR_AP_SIZE / (1024 * 1024)));
 
-    /* Video pipeline HW (MJDEC + DMA2D + YUV background framebuffers). The DSI
-     * display side is brought up later by lv_port_disp_init() in lvgl_task. The
-     * video task blocks on the JPEG queue until fs_reader produces a frame, so
-     * the DPI background framebuffer is only switched in after the display is up
-     * (same task ordering as lvgl_v8_with_osd). */
+    /* Video pipeline HW (MJDEC + DMA2D + YUV background buffers). The display side comes up
+     * later in lvgl_task; the video task blocks on the JPEG queue until fs_reader produces a
+     * frame, so the background is only switched in after the display is up. */
     if (dpi_manager_init() != 0) {
         LOG_E("dpi_manager_init failed\r\n");
         while (1) {

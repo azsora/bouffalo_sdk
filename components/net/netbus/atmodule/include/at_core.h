@@ -97,7 +97,9 @@ typedef enum {
 #define AT_CMD_DATA_SEND(s,len) at->device_ops.write_data((uint8_t *)(s), len)
 #define AT_CMD_DATA_RECV(s,len) at->device_ops.read_data((uint8_t *)(s), len)
 #define AT_CMD_RESPONSE(s) at->device_ops.write_data((uint8_t *)(s), strlen(s))
-  
+#define AT_CMD_RECV_ZEROCOPY(p,s) if (at->device_ops.read_zero_copy) {at->device_ops.read_zero_copy((void **)p, (uint8_t **)(s));}
+#define AT_CMD_BUFFER_RELEASE(p,s,len) if (at->device_ops.read_buffer_release) {at->device_ops.read_buffer_release((void *)p, (uint8_t *)(s), len);}
+
 #define AT_CMD_PARSE_STRING(i, string, max) do { \
     if (!at_arg_get_string(argv[i], string, max)) { \
         AT_CMD_PRINTF("para parse error!\r\n");    \

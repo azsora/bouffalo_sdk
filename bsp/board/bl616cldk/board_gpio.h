@@ -55,6 +55,12 @@ void board_pec_uart_gpio_init(void);
 #define PEC_QSPI_CAM_PCLK_PIN GPIO_PIN_28
 void board_pec_qspi_cam_gpio_init(void);
 
+#define PEC_DVP_CAM_VSYNC_PIN GPIO_PIN_23
+#define PEC_DVP_CAM_HSYNC_PIN GPIO_PIN_22
+#define PEC_DVP_CAM_PCLK_PIN  GPIO_PIN_21
+#define PEC_DVP_CAM_DATA0_PIN GPIO_PIN_26
+void board_pec_dvp_cam_gpio_init(void);
+
 #define PEC_DPI_DATA0_PIN  GPIO_PIN_16
 #define PEC_DPI_DATA1_PIN  GPIO_PIN_17
 #define PEC_DPI_DATA2_PIN  GPIO_PIN_18

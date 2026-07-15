@@ -87,13 +87,17 @@ extern const GLB_DSIPLL_Cfg_Type dsipllCfg_400M[GLB_XTAL_MAX];
 extern const GLB_DSIPLL_CFG_BASIC_Type dsipll500MCfg_40M;
 extern const GLB_DSIPLL_Cfg_Type dsipllCfg_500M[GLB_XTAL_MAX];
 
-/* 1200 MHz VCO / bitclk_div 2 = 600 MHz HS bit clock (300 MHz DDR clock lane,
- * 600 Mbps/lane). Same chain as the 400M table, just a higher VCO. */
+extern const GLB_DSIPLL_CFG_BASIC_Type dsipll550MCfg_40M;
+extern const GLB_DSIPLL_Cfg_Type dsipllCfg_550M[GLB_XTAL_MAX];
+
+extern const GLB_DSIPLL_CFG_BASIC_Type dsipll650MCfg_40M;
+extern const GLB_DSIPLL_Cfg_Type dsipllCfg_650M[GLB_XTAL_MAX];
+
+extern const GLB_DSIPLL_CFG_BASIC_Type dsipll750MCfg_40M;
+extern const GLB_DSIPLL_Cfg_Type dsipllCfg_750M[GLB_XTAL_MAX];
+
 extern const GLB_DSIPLL_CFG_BASIC_Type dsipll850MCfg_40M;
 extern const GLB_DSIPLL_Cfg_Type dsipllCfg_850M[GLB_XTAL_MAX];
-
-extern const GLB_DSIPLL_CFG_BASIC_Type dsipll1200MCfg_40M;
-extern const GLB_DSIPLL_Cfg_Type dsipllCfg_1200M[GLB_XTAL_MAX];
 
 /* Panel reset is driven by the LCD framework (LCD_RESET_* in lcd_conf_user.h),
  * which pulses the reset GPIO at the start of lcd_init() before this setup.
@@ -132,9 +136,6 @@ void mipi_dsi_v2_deinit(void);
  *       for short payloads -- no length-based downgrade).
  * Returns 0 on success, -1 on bad args, -2 if len exceeds DSI_V2_DCS_WRITE_MAX_LEN. */
 int mipi_dsi_v2_dcs_write_cmd(uint8_t data_type, uint8_t cmd, const uint8_t *data, uint16_t len);
-
-/* DCS read via LPDT; returns 0 on success, negative on error */
-int  mipi_dsi_v2_dcs_read(uint8_t cmd, uint8_t *buf, uint16_t len);
 
 /* ---------- Frame-buffer switch (shared by every DSI v2 panel) ----------
  *
@@ -188,6 +189,13 @@ void *mipi_dsi_v2_get_screen_using(void);
 /* Register a frame callback, invoked from the OSD SEOF ISR. SWAP and CYCLE are
  * both supported (mirrors the DPI framework). callback==NULL clears. Returns 0. */
 int mipi_dsi_v2_frame_callback_register(uint32_t callback_type, void (*callback)(void));
+
+/* Base (DPI background) layer swap, invoked from the OSD SEOF ISR on every frame
+ * boundary. Weak no-op by default: OSD0-only LVGL apps need no override (the base
+ * layer just scans black). An app driving a video background overrides this with a
+ * strong definition to latch the next decoded YUV frame into the DPI base layer
+ * between scanouts (see dpi_manager.c). Mirrors bl_mipi_dpi_v2_base_layer_swap(). */
+void mipi_dsi_v2_osd0_base_layer_swap(void);
 
 #ifdef __cplusplus
 }

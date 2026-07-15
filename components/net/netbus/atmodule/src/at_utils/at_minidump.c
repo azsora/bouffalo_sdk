@@ -4,6 +4,8 @@
 #include <partition.h>
 #include <bflb_flash.h>
 #include "utils_hex.h"
+#include "at_main.h"
+#include "at_core.h"
 #include "at_pal.h"
 
 static uint32_t core_addr;
@@ -19,7 +21,7 @@ int at_minidump()
     }
     
     uint8_t *buf = (uint8_t *)at_malloc(BUF_SIZE);
-    uint8_t *hex_buf = (uint8_t *)at_malloc(BUF_SIZE * 2 + 1);
+    char *hex_buf = (char *)at_malloc(BUF_SIZE * 2 + 1);
     int ret;
     int remain_size = core_size;
 
@@ -30,7 +32,7 @@ int at_minidump()
         return -1;
     }
 
-    at_write_data("\r\n", 2);
+    at_write_data((uint8_t *)"\r\n", 2);
     for(int i = 0; remain_size > 0; i++) {
         int chunk = remain_size > BUF_SIZE ? BUF_SIZE : remain_size;
         ret = bflb_flash_read(core_addr + core_size - remain_size, buf, chunk);
@@ -38,8 +40,8 @@ int at_minidump()
             remain_size -= chunk;
             utils_bin2hex(hex_buf, buf, chunk);
             hex_buf[chunk * 2] = '\0';
-            at_write_data(hex_buf, chunk * 2);
-            at_write_data("\r\n", 2);
+            at_write_data((uint8_t *)hex_buf, chunk * 2);
+            at_write_data((uint8_t *)"\r\n", 2);
         } else {
             printf("[MINIDUMP] Error: flash read failed at offset 0x%08x\r\n", core_addr + core_size - remain_size);
             at_free(buf);
@@ -47,7 +49,7 @@ int at_minidump()
             return -1;
         }
     }
-    at_write_data("\r\n", 2);
+    at_write_data((uint8_t *)"\r\n", 2);
 
     at_free(buf);
     at_free(hex_buf);

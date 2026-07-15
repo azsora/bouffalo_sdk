@@ -99,15 +99,18 @@ int at_wifi_state_get(void);
 
 int at_wifi_hostname_set(char *hostname);
 
+const char *at_wifi_hostname_get(void);
+
 int at_wifi_mode_set(uint8_t ap_or_sta, wifi_proto proto);
 
 wifi_proto at_wifi_mode_get(uint8_t ap_or_sta);
 
 void at_wifi_event_notify(void *private_data, uint32_t code);
 
+bool at_wifi_is_busy(void);
+
 #ifdef __cplusplus
 }
 #endif
 
 #endif/* AT_WIFI_MAIN_H */
-

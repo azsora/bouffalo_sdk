@@ -18,6 +18,7 @@
 #include "at_config.h"
 #include "at_net_main.h"
 #include "at_net_config.h"
+#include "at_through.h"
 #include "at_pal.h"
 
 net_config *at_net_config = NULL;
@@ -54,15 +55,21 @@ int at_net_config_init(void)
         AT_CMD_PRINTF("RECONN INTV config read failed, using default\r\n");
         at_net_config->reconn_intv = 1;
     }
-    at_net_config->recv_mode = NET_RECV_MODE_ACTIVE;
+    if (!at_config_read(AT_CONFIG_KEY_NET_RECVMODE, &at_net_config->recv_mode, sizeof(at_net_config->recv_mode))) {
+        at_net_config->recv_mode = NET_RECV_MODE_ACTIVE;
+    }
     if (!at_config_read(AT_CONFIG_KEY_NET_TRANS_LINK, &at_net_config->trans_link, sizeof(at_net_config->trans_link))) {
         AT_CMD_PRINTF("TRANS LINK config read failed, using default\r\n");
         at_net_config->trans_link.enable = 0;
+        at_net_config->trans_link.retry_cnt = 0;
     }
     at_net_config->sendl_cfg.report_size = 1024;
-    at_net_config->sendl_cfg.transmit_size = 2920;
+    at_net_config->sendl_cfg.transmit_size = AT_THROUGH_MAX_LEN;
     if (!at_config_read(AT_CONFIG_KEY_NET_SSLCONF, &at_net_config->sslconf, sizeof(at_net_config->sslconf))) {
         AT_CMD_PRINTF("SSL CONF config read failed\r\n");
+    }
+    if (!at_config_read(AT_CONFIG_KEY_NET_SSLSCONF, &at_net_config->sslsconf, sizeof(at_net_config->sslsconf))) {
+        AT_CMD_PRINTF("SSL Server CONF config read failed\r\n");
     }
     if (!at_config_read(AT_CONFIG_KEY_NET_IPV6_ENABLE, &at_net_config->ipv6_enable, sizeof(at_net_config->ipv6_enable))) {
         AT_CMD_PRINTF("IPV6 ENABLE config read failed, using default\r\n");
@@ -72,7 +79,7 @@ int at_net_config_init(void)
         AT_CMD_PRINTF("DNS config read failed\r\n");
         //ipaddr_aton(AT_CONFIG_DEFAULT_DNS1, &at_net_config->dns.dns[0]);
         //ipaddr_aton(AT_CONFIG_DEFAULT_DNS2, &at_net_config->dns.dns[1]);
-    } 
+    }
     return 0;
 }
 
@@ -90,10 +97,14 @@ int at_net_config_save(const char *key)
         return at_config_write(key, &at_net_config->trans_link, sizeof(at_net_config->trans_link));
     else if (strcmp(key, AT_CONFIG_KEY_NET_SSLCONF) == 0)
         return at_config_write(key, &at_net_config->sslconf, sizeof(at_net_config->sslconf));
+    else if (strcmp(key, AT_CONFIG_KEY_NET_SSLSCONF) == 0)
+        return at_config_write(key, &at_net_config->sslsconf, sizeof(at_net_config->sslsconf));
     else if (strcmp(key, AT_CONFIG_KEY_NET_IPV6_ENABLE) == 0) {
         return at_config_write(key, &at_net_config->ipv6_enable, sizeof(at_net_config->ipv6_enable));
     } else if (strcmp(key, AT_CONFIG_KEY_NET_DNS) == 0) {
         return at_config_write(key, &at_net_config->dns, sizeof(at_net_config->dns));
+    } else if (strcmp(key, AT_CONFIG_KEY_NET_RECVMODE) == 0) {
+        return at_config_write(key, &at_net_config->recv_mode, sizeof(at_net_config->recv_mode));
     }
         return -1;
 }
@@ -104,16 +115,19 @@ int at_net_config_default(void)
     ef_del_env(AT_CONFIG_KEY_NET_RECONN_INTV);
     ef_del_env(AT_CONFIG_KEY_NET_TRANS_LINK);
     ef_del_env(AT_CONFIG_KEY_NET_SSLCONF);
+    ef_del_env(AT_CONFIG_KEY_NET_SSLSCONF);
     ef_del_env(AT_CONFIG_KEY_NET_IPV6_ENABLE);
     ef_del_env(AT_CONFIG_KEY_NET_DNS);
+    ef_del_env(AT_CONFIG_KEY_NET_RECVMODE);
     if (at_net_config) {
         memset(&at_net_config->tcp_opt, 0, sizeof(at_net_config->tcp_opt));
         memset(&at_net_config->reconn_intv, 0, sizeof(at_net_config->reconn_intv));
         memset(&at_net_config->trans_link, 0, sizeof(at_net_config->trans_link));
         memset(&at_net_config->sslconf, 0, sizeof(at_net_config->sslconf));
+        memset(&at_net_config->sslsconf, 0, sizeof(at_net_config->sslsconf));
         memset(&at_net_config->ipv6_enable, 0, sizeof(at_net_config->ipv6_enable));
         memset(&at_net_config->dns, 0, sizeof(at_net_config->dns));
+        memset(&at_net_config->recv_mode, 0, sizeof(at_net_config->recv_mode));
     }
     return 0;
 }
-

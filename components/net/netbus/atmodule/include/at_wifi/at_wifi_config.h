@@ -32,6 +32,8 @@ extern "C" {
 #define AT_CONFIG_KEY_WIFI_LAPOPT           "WIFILAPOPT"
 #define AT_CONFIG_KEY_WIFI_ANTDIV           "ANTDIV"
 #define AT_CONFIG_KEY_WIFI_NETMODE          "NETMODE"
+#define AT_CONFIG_KEY_WIFI_SEC_CRED         "WIFISECCRED"
+#define AT_CONFIG_KEY_WIFI_AP_SEC_CRED      "WIFIAPSECCRED"
 
 #define AT_WIFI_COUNTRY_CODE                {"CN", "JP", "US", "EU", "WW"}
 
@@ -53,8 +55,14 @@ typedef struct {
 
 typedef struct {
     char ssid[33];
-    char psk[65];
-    char pmk[66];
+    union {
+        char psk[65];
+        uint8_t pwd_encrypted[65];
+    };
+    union {
+        uint8_t iv[16];
+        char pmk[66];
+    };
     uint16_t freq;
     uint8_t bssid[6];
     uint8_t listen_interval;
@@ -67,7 +75,10 @@ typedef struct {
 
 typedef struct {
     char ssid[33];
-    char pwd[65];
+    union {
+        char pwd[65];
+        uint8_t pwd_encrypted[65];
+    };
     uint8_t channel;
     uint8_t ecn;
     uint8_t max_conn;
@@ -144,6 +155,13 @@ typedef struct {
     uint8_t  ant_div_pin;
 } wifi_ant_div;
 
+#define MAX_SECURE_CRED_COUNT    5
+
+typedef struct {
+    char ssid[33];
+    uint8_t pwd_encrypted[65];
+    uint8_t iv[16];
+} wifi_secure_credential_t;
 
 typedef struct {
     wifi_work_mode wifi_mode;
@@ -169,6 +187,8 @@ typedef struct {
     uint8_t  wevt_enable;
     wifi_ant_div ant_div;
     uint8_t  netmode;
+    wifi_secure_credential_t credential_cache[MAX_SECURE_CRED_COUNT];
+    wifi_secure_credential_t ap_credential_cache;
 }wifi_config;
 
 extern wifi_config *at_wifi_config;
@@ -178,6 +198,18 @@ int at_wifi_config_init(void);
 int at_wifi_config_save(const char *key);
 
 int at_wifi_config_default(void);
+
+void at_wifi_init_credential_cache(void);
+
+int save_credential_to_cache(const char *ssid, const char *password);
+
+int find_credential_slot(const char *ssid, int *free_index);
+
+int credential_update(void);
+
+int clear_cached_credential(const char *ssid);
+
+int delete_credential_from_cache(const char *ssid);
 
 #ifdef __cplusplus
 }

@@ -101,9 +101,9 @@ static bool eth_link_state_update(eth_phy_ctrl_t *phy_ctrl, struct bflb_device_s
 #if (defined(EMAC_SPEED_10M_SUPPORT) && EMAC_SPEED_10M_SUPPORT)
         /* 10M/100M speed mode */
         if (speed == EPHY_SPEED_MODE_10M_HALF_DUPLEX || speed == EPHY_SPEED_MODE_10M_FULL_DUPLEX) {
-            bflb_emac_feature_control(emac_dev, EMAC_CMD_SET_SPEED_10M, NULL);
+            bflb_emac_feature_control(emac_dev, EMAC_CMD_SET_SPEED_10M, 0);
         } else {
-            bflb_emac_feature_control(emac_dev, EMAC_CMD_SET_SPEED_100M, NULL);
+            bflb_emac_feature_control(emac_dev, EMAC_CMD_SET_SPEED_100M, 0);
         }
 #endif
         if (speed == EPHY_SPEED_MODE_10M_FULL_DUPLEX || speed == EPHY_SPEED_MODE_100M_FULL_DUPLEX) {

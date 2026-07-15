@@ -105,6 +105,9 @@ struct ip6_reassdata {
   u16_t datagram_len;
   u8_t nexth;
   u8_t timer;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t timer_deadline_ms;
+#endif
 #if LWIP_IPV6_SCOPES
   u8_t src_zone; /* zone of original packet's source address */
   u8_t dest_zone; /* zone of original packet's destination address */
@@ -113,6 +116,10 @@ struct ip6_reassdata {
 
 #define ip6_reass_init() /* Compatibility define */
 void ip6_reass_tmr(void);
+void ip6_reass_cleanup(void);
+#if IPV6_TIMER_PRECISE_NEEDED
+u32_t ip6_reass_tmr_sleeptime(void);
+#endif
 struct pbuf *ip6_reass(struct pbuf *p);
 
 #endif /* LWIP_IPV6 && LWIP_IPV6_REASS */

@@ -47,6 +47,7 @@ extern struct netif *at_wifi_netif_get(uint8_t vif_idx);
 #ifdef CONFIG_ATMODULE_NETHUB_WIFICHANNELAUTO
 #include <nethub.h>
 #endif
+#include "at_utils_crypto.h"
 #define DBG_TAG "MAIN"
 #include "log.h"
 
@@ -139,7 +140,9 @@ void wifiopt_sta_connect(void)
         return;
     }
     char *ssid = at_wifi_config->sta_info.ssid;
+    char pwd_plain[65] = {0};
     char *psk = at_wifi_config->sta_info.psk;
+    bool has_encrypted_pwd = false;
 
 #ifdef CONFIG_WL80211
     int pmf_cfg = 0;
@@ -166,6 +169,21 @@ void wifiopt_sta_connect(void)
         return;
     }
 
+    for (int i = 0; i < sizeof(at_wifi_config->sta_info.iv); i++) {
+        if (at_wifi_config->sta_info.iv[i] != 0) {
+            has_encrypted_pwd = true;
+            break;
+        }
+    }
+    if (has_encrypted_pwd) {
+        at_utils_crypto_aes_cbc_decrypt(at_wifi_config->sta_info.iv,
+                                        64,
+                                        at_wifi_config->sta_info.pwd_encrypted,
+                                        (uint8_t *)pwd_plain);
+        psk = pwd_plain;
+    }
+    pmf_cfg = at_wifi_config->sta_info.pmf;
+
     if (memcmp(bssid, invalid_mac, sizeof(invalid_mac)) == 0) {
         bssid = NULL;
     } else {
@@ -191,10 +209,13 @@ void wifiopt_sta_connect(void)
     }
 #ifdef CONFIG_ATMODULE_WIFI_ANTENNA_CTL
     if (antenna_hal_is_static_div_enabled()) {
-        return wifi_sta_antenna_connect(ssid, psk, (const char *)bssid, at_wifi_config->sta_info.wep_en?"WEP":NULL, pmf_cfg, freq, freq, dhcp_en);
+        wifi_sta_antenna_connect(ssid, psk, (const char *)bssid, at_wifi_config->sta_info.wep_en?"WEP":NULL, pmf_cfg, freq, freq, dhcp_en);
+        memset(pwd_plain, 0, sizeof(pwd_plain));
+        return;
     }
 #endif
     at_wifi_mgmr_sta_connect(ssid, psk, (const char *)bssid, at_wifi_config->sta_info.wep_en?"WEP":NULL, pmf_cfg, freq, freq, dhcp_en);
+    memset(pwd_plain, 0, sizeof(pwd_plain));
 }
 
 static int wifiopt_ap_stop(int force)
@@ -216,6 +237,7 @@ int at_wifi_ap_set_dhcp_range(int start, int end)
 static int wifi_ap_start(void)
 {
     at_wifi_mgmr_ap_params_t config = {0};
+    char pwd_plain[65] = {0};
 
     if (at_wifi_config->wifi_mode == WIFI_AP_STA_MODE) {
         uint8_t sta_channel;
@@ -226,8 +248,15 @@ static int wifi_ap_start(void)
         }
     }
 
+    if (at_wifi_config->ap_info.ecn != AT_WIFI_ENC_OPEN) {
+        at_utils_crypto_aes_cbc_decrypt(at_wifi_config->ap_credential_cache.iv,
+                                        64,
+                                        at_wifi_config->ap_credential_cache.pwd_encrypted,
+                                        (uint8_t *)pwd_plain);
+    }
+
     config.ssid = at_wifi_config->ap_info.ssid;
-    config.key = at_wifi_config->ap_info.pwd;
+    config.key = at_wifi_config->ap_info.ecn == AT_WIFI_ENC_OPEN ? NULL : pwd_plain;
     config.hidden_ssid = at_wifi_config->ap_info.ssid_hidden;
     config.channel = at_wifi_config->ap_info.channel;
     config.use_dhcpd = at_wifi_config->dhcp_state.bit.ap_dhcp;
@@ -248,6 +277,7 @@ static int wifi_ap_start(void)
     struct netif *netif __attribute__((unused)) = at_wifi_netif_get(AT_WIFI_VIF_AP);
 
     int ret = at_wifi_mgmr_ap_start(&config);
+    memset(pwd_plain, 0, sizeof(pwd_plain));
     if (ret != 0) {
         return ret;
     }
@@ -606,7 +636,7 @@ void at_wifi_event_notify(void *private_data, uint32_t code)
                 if (!at_wifi_config->sta_info.store) {
                     at_wifi_config->sta_info.store = 1;
                     if (at->store) {
-                        at_wifi_config_save(AT_CONFIG_KEY_WIFI_STA_INFO);
+                        credential_update();
                     }
                 }
 
@@ -868,6 +898,34 @@ int at_wifi_hostname_set(char *hostname)
     }
 #endif
     return 0;
+}
+
+const char *at_wifi_hostname_get(void)
+{
+#if defined(CONFIG_ATMODULE_NETWORK) && (CONFIG_ATMODULE_NETWORK) && LWIP_NETIF_HOSTNAME
+    struct netif *netif = at_wifi_netif_get(AT_WIFI_VIF_STA);
+    if (netif) {
+        return netif_get_hostname(netif);
+    }
+#endif
+    return NULL;
+}
+
+bool at_wifi_is_busy(void)
+{
+    if (!at_wifi_config) {
+        return false;
+    }
+
+    if ((at_wifi_config->wifi_mode == WIFI_SOFTAP_MODE || at_wifi_config->wifi_mode == WIFI_AP_STA_MODE) &&
+        g_wifi_ap_is_start == 1) {
+        return true;
+    }
+    if ((at_wifi_config->wifi_mode == WIFI_STATION_MODE || at_wifi_config->wifi_mode == WIFI_AP_STA_MODE) &&
+        at_wifi_config->connecting_state) {
+        return true;
+    }
+    return false;
 }
 
 /* This function must be called after wifi init done */

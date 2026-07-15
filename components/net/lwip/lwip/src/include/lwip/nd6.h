@@ -67,6 +67,25 @@ struct pbuf;
 struct netif;
 
 void nd6_tmr(void);
+#if IPV6_TIMER_PRECISE_NEEDED
+u32_t nd6_tmr_sleeptime(void);
+#endif
+#if LWIP_IPV6_LP_REACHABILITY_REFRESH
+#define ND6_LP_REFRESH_MLD      0x01
+#define ND6_LP_REFRESH_RS       0x02
+#define ND6_LP_REFRESH_NS       0x04
+#define ND6_LP_REFRESH_ALL      (ND6_LP_REFRESH_MLD | ND6_LP_REFRESH_RS | ND6_LP_REFRESH_NS)
+
+#define ND6_LP_REFRESH_REASON_LINK_RESUME       0x01
+#define ND6_LP_REFRESH_REASON_MCAST_UNCERTAIN   0x02
+#define ND6_LP_REFRESH_REASON_DOWNLINK_REQUIRED 0x04
+
+/* These APIs mutate ND6/timer state and must run in the TCPIP core context. */
+err_t nd6_lp_refresh_netif(struct netif *netif, u8_t flags);
+void nd6_lp_refresh_request(struct netif *netif, u8_t reason);
+void nd6_lp_refresh_netif_state_changed(struct netif *netif);
+void nd6_lp_refresh_netif_disable(struct netif *netif);
+#endif
 void nd6_input(struct pbuf *p, struct netif *inp);
 void nd6_clear_destination_cache(void);
 struct netif *nd6_find_route(const ip6_addr_t *ip6addr);
@@ -76,9 +95,12 @@ u16_t nd6_get_destination_mtu(const ip6_addr_t *ip6addr, struct netif *netif);
 void nd6_reachability_hint(const ip6_addr_t *ip6addr);
 #endif /* LWIP_ND6_TCP_REACHABILITY_HINTS */
 void nd6_cleanup_netif(struct netif *netif);
+/* These lifecycle hooks must run in the TCPIP core context. */
+void nd6_netif_state_changed(struct netif *netif);
 #if LWIP_IPV6_MLD
 void nd6_adjust_mld_membership(struct netif *netif, s8_t addr_idx, u8_t new_state);
 #endif /* LWIP_IPV6_MLD */
+/* Must be called from the TCPIP core context. */
 void nd6_restart_netif(struct netif *netif);
 
 #ifdef __cplusplus

@@ -139,6 +139,9 @@ int wl80211_mac_monitor_stop(void);
  * @return 0 on success, negative value on error
  */
 int wl80211_mac_inject_frame(struct wl80211_inject_frame_params *params);
+#if defined(CONFIG_WL80211_P2P)
+int wl80211_mac_remain_on_channel(struct wl80211_roc_params *params);
+#endif
 
 // only for type checker
 struct wl80211_tx_header;

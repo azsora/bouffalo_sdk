@@ -14,6 +14,8 @@
 extern "C" {
 #endif
 
+const at_device_ops *at_devops_get(void);
+
 int at_port_init(void);
 
 int at_port_deinit(void);

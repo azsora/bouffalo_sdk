@@ -55,7 +55,7 @@ void free_aligned_with_padding(void *ptr)
     }
     uintptr_t aligned_addr = (uintptr_t)ptr;
     uintptr_t addr = aligned_addr - *(char *)(aligned_addr - 1);
-
+    
     vPortFree((void *)addr);
 }
 

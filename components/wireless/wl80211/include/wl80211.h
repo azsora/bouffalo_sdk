@@ -12,7 +12,7 @@
 #define COMPAT_WIFI_MGMR
 
 #ifndef container_of
-#define container_of(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
+#define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
 
 /* async event type */
@@ -46,15 +46,30 @@ struct wl80211_scan_result_item {
     uint8_t band;
     uint8_t channel;
     int8_t rssi;
+#if defined(CONFIG_WL80211_P2P)
+    uint8_t *raw_frame;
+    uint16_t raw_frame_len;
+#endif
 #define WL80211_SCAN_AP_RESULT_FLAGS_HAS_RSN  0x1
 #define WL80211_SCAN_AP_RESULT_FLAGS_HAS_WPA  0x2
 #define WL80211_SCAN_AP_RESULT_FLAGS_HAS_CCMP 0x4
 #define WL80211_SCAN_AP_RESULT_FLAGS_HAS_TKIP 0x8
 #define WL80211_SCAN_AP_RESULT_FLAGS_HAS_WPS  0x10
+#if defined(CONFIG_WL80211_P2P)
+#define WL80211_SCAN_AP_RESULT_FLAGS_HAS_P2P 0x20
+#endif
     uint8_t flags;
 
     uint32_t key_mgmt : 20;
     uint32_t mode     : 16;
+
+#if defined(CONFIG_WL80211_P2P)
+    uint8_t p2p_dev_addr[6];
+    uint8_t p2p_group_capab;
+    uint8_t p2p_oper_channel;
+    uint8_t *p2p_ie;
+    uint16_t p2p_ie_len;
+#endif
 };
 
 int bssidcmp(struct wl80211_scan_result_item *e1, struct wl80211_scan_result_item *e2);
@@ -203,6 +218,12 @@ struct wl80211_ap_settings {
     uint8_t auth_type; // ref @ enum wl80211_auth_type
     const uint8_t *ie;
     uint16_t ie_len;
+#if defined(CONFIG_WL80211_P2P)
+    const uint8_t *beacon_ie;
+    uint16_t beacon_ie_len;
+#endif
+    const uint8_t *probe_resp_ie;
+    uint16_t probe_resp_ie_len;
     uint32_t flags;
 };
 
@@ -224,6 +245,44 @@ struct wl80211_monitor_settings {
     void *recv_ctx;
     wl80211_monitor_rx_cb_t recv;
 };
+
+#if defined(CONFIG_WL80211_P2P)
+enum wl80211_p2p_role {
+    WL80211_P2P_ROLE_IDLE = 0,
+    WL80211_P2P_ROLE_DEVICE,
+    WL80211_P2P_ROLE_CLIENT,
+    WL80211_P2P_ROLE_GO,
+};
+
+enum wl80211_p2p_action_kind {
+    WL80211_P2P_ACTION_NONE = 0,
+    WL80211_P2P_ACTION_PUBLIC,
+    WL80211_P2P_ACTION_VENDOR,
+};
+
+struct wl80211_p2p_action_info {
+    uint8_t category;
+    uint8_t action;
+    uint8_t kind;
+    const uint8_t *payload;
+    uint32_t payload_len;
+};
+
+struct wl80211_p2p_group_state {
+    uint8_t peer_dev_addr[6];
+    uint8_t go_dev_addr[6];
+    uint16_t operating_freq;
+    uint8_t persistent;
+};
+
+struct wl80211_p2p_state {
+    uint8_t role;
+    unsigned int discovery_active : 1;
+    unsigned int roc_active       : 1;
+    unsigned int group_forming    : 1;
+    struct wl80211_p2p_group_state group;
+};
+#endif
 
 /* wl80211 global state */
 struct wl80211_global_state {
@@ -261,9 +320,14 @@ struct wl80211_global_state {
     uint16_t ap_beacon_interval;
     uint8_t *ap_ie;
     uint16_t ap_ie_len;
+    uint8_t *ap_probe_resp_ie;
+    uint16_t ap_probe_resp_ie_len;
     /* station max idle time before send deauth (x5 seconds) */
     uint16_t ap_max_idle_time;
     struct aid_list_entry aid_list[4];
+#if defined(CONFIG_WL80211_P2P)
+    struct wl80211_p2p_state p2p;
+#endif
     uint8_t assoc_sta_count;
 };
 extern struct wl80211_global_state wl80211_glb;
@@ -271,6 +335,10 @@ extern struct wl80211_global_state wl80211_glb;
 /* Input callback function type */
 typedef int (*wl80211_input_cb_t)(void *prv, uint8_t vif_type, void *rxhdr, void *buf, uint32_t frm_len,
                                   uint32_t status);
+#if defined(CONFIG_WL80211_P2P)
+typedef int (*wl80211_mgmt_rx_cb_t)(void *prv, uint8_t vif_type, void *rxhdr, const uint8_t *frame, uint32_t frame_len,
+                                    uint32_t status);
+#endif
 
 void wl80211_init(void);
 int wl80211_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -282,6 +350,13 @@ int wl80211_output_raw(uint8_t vif_type, void *buffer, uint16_t len, unsigned in
 /* Input callback registration interface - allows external modules to register receive callback */
 int wl80211_register_input_cb(wl80211_input_cb_t cb, void *prv);
 int wl80211_unregister_input_cb(void);
+#if defined(CONFIG_WL80211_P2P)
+int wl80211_register_mgmt_rx_cb(wl80211_mgmt_rx_cb_t cb, void *prv);
+int wl80211_unregister_mgmt_rx_cb(void);
+#endif
+#if defined(CONFIG_WL80211_P2P)
+bool wl80211_p2p_parse_action_frame(const uint8_t *frame, uint32_t frame_len, struct wl80211_p2p_action_info *info);
+#endif
 
 enum {
     WL80211_EVT_SCAN_DONE,
@@ -303,6 +378,9 @@ enum {
     WL80211_CTRL_STA_CONNECT,     // param freq flags
     WL80211_CTRL_STA_SET_PS_MODE, // set wifi ps mode
     WL80211_CTRL_STA_DISCONNECT,
+#if defined(CONFIG_WL80211_P2P)
+    WL80211_CTRL_REMAIN_ON_CHANNEL,
+#endif
 
     WL80211_CTRL_STA_GET_MAC,
     WL80211_CTRL_STA_GET_RSSI,
@@ -723,12 +801,133 @@ static inline int wl80211_monitor_status(void)
  * Frame injection parameters
  */
 struct wl80211_inject_frame_params {
-    void *frame;        /**< Complete 802.11 frame buffer */
-    uint16_t len;       /**< Frame length in bytes */
-    uint16_t freq;      /**< Channel frequency in MHz */
+    void *frame;   /**< Complete 802.11 frame buffer */
+    uint16_t len;  /**< Frame length in bytes */
+    uint16_t freq; /**< Channel frequency in MHz */
+#if defined(CONFIG_WL80211_P2P)
+    uint32_t duration_ms;                  /**< Optional off-channel dwell time */
+    bool wait_rx;                          /**< Keep channel long enough for a response */
+    bool fixed_rate;                       /**< Use rate instead of MACSW raw-send default */
+    uint8_t rate;                          /**< MACSW HW_RATE_* index when fixed_rate is true */
+    uint8_t retry_limit;                   /**< Optional MAC retry limit; 0 keeps MACSW default */
+    void (*status_cb)(void *, int status); /**< Optional raw TX status callback */
+#endif
     void (*cb)(void *); /**< Optional completion callback */
     void *opaque;       /**< User data for callback */
 };
+
+#if defined(CONFIG_WL80211_P2P)
+enum wl80211_roc_op {
+    WL80211_ROC_OP_START = 0,
+    WL80211_ROC_OP_CANCEL,
+};
+
+struct wl80211_roc_params {
+    uint8_t vif_type;     /**< VIF to use for remain-on-channel */
+    uint8_t op_code;      /**< enum wl80211_roc_op */
+    uint16_t freq;        /**< Channel frequency in MHz; ignored for cancel */
+    uint32_t duration_ms; /**< Requested dwell time in milliseconds */
+};
+
+/**
+ * Start remain-on-channel on a specific frequency
+ *
+ * Return value:
+ *   0  : Success
+ *   <0 : Error from wl80211/macsw remain-on-channel handling
+ */
+static inline int wl80211_remain_on_channel_start(uint8_t vif_type, uint16_t freq, uint32_t duration_ms)
+{
+    struct wl80211_roc_params params = {
+        .vif_type = vif_type,
+        .op_code = WL80211_ROC_OP_START,
+        .freq = freq,
+        .duration_ms = duration_ms,
+    };
+
+    return wl80211_cntrl(WL80211_CTRL_REMAIN_ON_CHANNEL, &params);
+}
+
+/**
+ * Cancel remain-on-channel for a VIF
+ *
+ * Return value:
+ *   0  : Success
+ *   <0 : Error from wl80211/macsw remain-on-channel handling
+ */
+static inline int wl80211_cancel_remain_on_channel(uint8_t vif_type)
+{
+    struct wl80211_roc_params params = {
+        .vif_type = vif_type,
+        .op_code = WL80211_ROC_OP_CANCEL,
+        .freq = 0,
+        .duration_ms = 0,
+    };
+
+    return wl80211_cntrl(WL80211_CTRL_REMAIN_ON_CHANNEL, &params);
+}
+#endif
+
+#if defined(CONFIG_WL80211_P2P)
+static inline bool wl80211_p2p_addr_is_zero(const uint8_t addr[6])
+{
+    return addr == NULL || (addr[0] | addr[1] | addr[2] | addr[3] | addr[4] | addr[5]) == 0;
+}
+
+static inline void wl80211_p2p_set_role(enum wl80211_p2p_role role)
+{
+    wl80211_glb.p2p.role = (uint8_t)role;
+}
+
+static inline void wl80211_p2p_set_discovery(bool enabled)
+{
+    wl80211_glb.p2p.discovery_active = enabled ? 1U : 0U;
+}
+
+static inline void wl80211_p2p_set_group_forming(bool enabled)
+{
+    wl80211_glb.p2p.group_forming = enabled ? 1U : 0U;
+}
+
+static inline void wl80211_p2p_reset_group_state(void)
+{
+    memset(&wl80211_glb.p2p.group, 0, sizeof(wl80211_glb.p2p.group));
+}
+
+static inline void wl80211_p2p_mark_device_ready(bool discovery_active)
+{
+    wl80211_p2p_reset_group_state();
+    wl80211_glb.p2p.role = WL80211_P2P_ROLE_DEVICE;
+    wl80211_glb.p2p.discovery_active = discovery_active ? 1U : 0U;
+    wl80211_glb.p2p.group_forming = 0U;
+}
+
+static inline void wl80211_p2p_mark_group_started(enum wl80211_p2p_role role, uint16_t operating_freq,
+                                                  const uint8_t *peer_dev_addr, const uint8_t *go_dev_addr,
+                                                  bool persistent)
+{
+    wl80211_p2p_reset_group_state();
+    if (peer_dev_addr != NULL) {
+        memcpy(wl80211_glb.p2p.group.peer_dev_addr, peer_dev_addr, sizeof(wl80211_glb.p2p.group.peer_dev_addr));
+    }
+    if (go_dev_addr != NULL) {
+        memcpy(wl80211_glb.p2p.group.go_dev_addr, go_dev_addr, sizeof(wl80211_glb.p2p.group.go_dev_addr));
+    }
+    wl80211_glb.p2p.group.operating_freq = operating_freq;
+    wl80211_glb.p2p.group.persistent = persistent ? 1U : 0U;
+    wl80211_glb.p2p.role = (uint8_t)role;
+    wl80211_glb.p2p.discovery_active = 0U;
+    wl80211_glb.p2p.group_forming = 0U;
+}
+
+static inline void wl80211_p2p_mark_group_removed(void)
+{
+    wl80211_p2p_reset_group_state();
+    wl80211_glb.p2p.role = WL80211_P2P_ROLE_IDLE;
+    wl80211_glb.p2p.discovery_active = 0U;
+    wl80211_glb.p2p.group_forming = 0U;
+}
+#endif
 
 /**
  * Rate configuration for STA rate control

@@ -116,19 +116,8 @@ void lvgl_main(void *param)
 
 int main(void)
 {
-    struct bflb_device_s *gpio;
-    gpio = bflb_device_get_by_name("gpio");
-
     board_init();
     board_dpi_gpio_init();
-    bflb_gpio_init(gpio, GPIO_PIN_45, GPIO_FUNC_GPIO | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN);
-    bflb_gpio_init(gpio, GPIO_PIN_46, GPIO_FUNC_GPIO | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN);
-    bflb_gpio_init(gpio, GPIO_PIN_47, GPIO_FUNC_GPIO | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN);
-    bflb_gpio_init(gpio, GPIO_PIN_48, GPIO_FUNC_GPIO | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN);
-    bflb_gpio_init(gpio, GPIO_PIN_0, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-    bflb_gpio_init(gpio, GPIO_PIN_1, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-    bflb_gpio_init(gpio, GPIO_PIN_2, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
-    bflb_gpio_init(gpio, GPIO_PIN_3, GPIO_FUNC_DPI | GPIO_ALTERNATE | GPIO_PULLUP | GPIO_SMT_EN | GPIO_DRV_1);
 
     board_jtag_gpio_init();
     struct bflb_wdg_config_s wdg_cfg;

@@ -44,26 +44,24 @@ static const mipi_dsi_v2_timing_t ili9881c_kd050020_timing = {
     .height     = 1280,
     .hsw        = 6,
     .hbp        = 20,
-    .hfp        = 50,
+    .hfp        = 47,
     .vsw        = 6,
-    .vbp        = 10,
-    .vfp        = 20,
+    .vbp        = 8,
+    .vfp        = 1,
     .lane_num   = BFLB_DSI_LANES_4,
     .lane_order = BFLB_DSI_LANE_ORDER_3210,
     .data_type  = BFLB_DSI_DATA_RGB565,
     .reset_pin  = GPIO_PIN_2,
 
-    /* PLL / clock tree: 800M DSI PLL off the 40M xtal, ESC sel/div 0/0,
-     * display clock WIFIPLL_160M /3 (the values this panel was bringing up
-     * with before they were parameterized). */
-    .pll_cfg         = &dsipllCfg_400M[GLB_XTAL_40M],
+    /* pll */
+    .pll_cfg         = &dsipllCfg_550M[GLB_XTAL_40M],
     .esc_clk_sel     = 0,
     .esc_clk_div     = 0,
-    .display_clk_sel = GLB_DP_CLK_WIFIPLL_160M,
-    .display_clk_div = 3,
-    .dsi_hs_clock    = 400*1000*1000,
+    .display_clk_sel = GLB_DP_CLK_WIFIPLL_240M,
+    .display_clk_div = 5,
+    .dsi_hs_clock    = 550 * 1000 * 1000,
 
-    /* D-PHY HS timing tuned for this panel's ~400MHz HS bit clock. */
+    /* D-PHY HS timing */
     .dphy = {
         .time_clk_exit     = 5,
         .time_clk_trail    = 3,

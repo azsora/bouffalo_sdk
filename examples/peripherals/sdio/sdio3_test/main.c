@@ -259,12 +259,6 @@ void sdio3_test(void)
     bool func1_ready = false;
     bool func2_ready = false;
 
-#if defined(BL618DG)
-    bflb_glb_per_clock_ungate(GLB_AHB_CLOCK_SDU);
-    bflb_glb_per_clock_ungate(GLB_AHB_CLOCK_USB20_SDU);
-    bflb_glb_per_clock_ungate(GLB_AHB_CLOCK_USB_SDIO);
-#endif
-
     sdio3_hd = bflb_device_get_by_name("sdio3");
     if (sdio3_hd == NULL) {
         LOG_I("get device failed\r\n");

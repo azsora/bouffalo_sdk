@@ -994,6 +994,12 @@ struct cfgmacsw_coex_enable {
     struct cfgmacsw_msg_hdr hdr;
     /// Vif idx
     uint16_t fhost_vif_idx;
+    /// Whether config_id was explicitly supplied by the application
+    bool config_present;
+    /// Fixed configuration ID carried as a stable wire value
+    uint8_t config_id;
+    /// Request software TBTT/PS_PTA runtime
+    bool ps_pta_enable;
 };
 
 /// structure for CFGMACSW_COEX_DISABLE_CMD

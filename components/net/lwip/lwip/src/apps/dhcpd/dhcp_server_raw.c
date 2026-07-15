@@ -12,7 +12,13 @@
 #include <lwip/netifapi.h>
 #include <lwip/tcpip.h>
 
-#define DHCPD_MAX_DNS_SERVER_NUM    2
+#define DHCPD_MAX_DNS_SERVER_NUM    0
+
+#ifdef CONFIG_DHCPD_DNS_SERVER_IP
+#define DHCP_DNS_SERVER_IP CONFIG_DHCPD_DNS_SERVER_IP
+#else
+#define DHCP_DNS_SERVER_IP "0.0.0.0"
+#endif
 
 /* DHCP server option */
 #define DHCP_CLIENT_PORT  68
@@ -52,7 +58,7 @@
 /** Mac address length  */
 #define DHCP_MAX_HLEN               6
 /** dhcp default live time */
-#define DHCP_DEFAULT_LIVE_TIME      0x80510100
+#define DHCP_DEFAULT_LIVE_TIME      86400
 
 /** Minimum length for request before packet is parsed */
 #define DHCP_MIN_REQUEST_LEN        44
@@ -399,13 +405,13 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
             SMEMCPY(opt_buf, &ip_2_ip4(&dhcp_server->netif->netmask)->addr, 4);
             opt_buf += 4;
 
+#ifndef CONFIG_DHCPD_NO_DNS
             *opt_buf++ = DHCP_OPTION_DNS_SERVER;
 #ifdef DHCP_DNS_SERVER_IP
             *opt_buf++ = 4;
             {
-                const ip_addr_t *dns_getserver(u8_t numdns);
-                ip_addr_t dns_addr = *(dns_getserver(0));
-                // ipaddr_aton(DHCP_DNS_SERVER_IP, &dns_addr);
+                ip_addr_t dns_addr;
+                ipaddr_aton(DHCP_DNS_SERVER_IP, &dns_addr);
                 SMEMCPY(opt_buf, &ip_2_ip4(&dns_addr)->addr, 4);
             }
             opt_buf += 4;
@@ -430,6 +436,7 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
                 *dns_len += 4;
             }
 #endif /* DHCP_DNS_SERVER_IP */
+#endif
 
 #ifndef CONFIG_DHCPD_NO_ROUTER
             *opt_buf++ = DHCP_OPTION_ROUTER;
@@ -462,6 +469,17 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
                 {
                     DEBUG_PRINTF("[%c%c] RECV REQUEST from " MACSTR "\r\n",
                         dhcp_server->netif->name[0], dhcp_server->netif->name[1], MAC2STR(msg->chaddr));
+
+                    /* RFC 2131 §4.3.2: if REQUEST contains a server_id that isn't us,
+                     * it's for another server — silently ignore, do not ACK or NAK */
+                    opt = dhcp_server_option_find(opt_buf, length, DHCP_OPTION_SERVER_ID);
+                    if ((opt != NULL) && (memcmp(&opt[2], &(dhcp_server->netif->ip_addr), 4) != 0))
+                    {
+                        DEBUG_PRINTF("[%c%c] IGNORE REQUEST from " MACSTR " (server_id mismatch)\r\n",
+                            dhcp_server->netif->name[0], dhcp_server->netif->name[1], MAC2STR(msg->chaddr));
+                        goto free_pbuf_and_return;
+                    }
+
                     node = dhcp_client_find(dhcp_server, msg, opt_buf, length);
                     if (node != NULL)
                     {
@@ -505,13 +523,13 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
                         SMEMCPY(opt_buf, &ip_2_ip4(&dhcp_server->netif->netmask)->addr, 4);
                         opt_buf += 4;
 
+#ifndef CONFIG_DHCPD_NO_DNS
                         *opt_buf++ = DHCP_OPTION_DNS_SERVER;
 #ifdef DHCP_DNS_SERVER_IP
                         *opt_buf++ = 4;
                         {
-                            const ip_addr_t *dns_getserver(u8_t numdns);
-                            ip_addr_t dns_addr = *(dns_getserver(0));
-                            // ipaddr_aton(DHCP_DNS_SERVER_IP, &dns_addr);
+                            ip_addr_t dns_addr;
+                            ipaddr_aton(DHCP_DNS_SERVER_IP, &dns_addr);
                             SMEMCPY(opt_buf, &ip_2_ip4(&dns_addr)->addr, 4);
                         }
                         opt_buf += 4;
@@ -536,6 +554,7 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
                             *dns_len += 4;
                         }
 #endif /* DHCP_DNS_SERVER_IP */
+#endif
 
 #ifndef CONFIG_DHCPD_NO_ROUTER
                         *opt_buf++ = DHCP_OPTION_ROUTER;
@@ -625,7 +644,6 @@ dhcp_server_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t
                             break;
                         }
                         node_prev = node;
-                        node = node->next;
                     }
 
                     if (node != NULL)
@@ -795,7 +813,7 @@ static err_t dhcp_server_op_dns_server(void* netif, const ip_addr_t *dnsserver, 
 
     /* Set */
     if (!reset && free) {
-        ip4_addr_set(&dhcp_server->dnsserver[free], ip_2_ip4(dnsserver));
+        ip4_addr_copy(dhcp_server->dnsserver[free], *ip_2_ip4(dnsserver));
     }
     /* Reset */
     else if (reset && found) {

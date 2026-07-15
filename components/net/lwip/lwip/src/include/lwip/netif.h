@@ -286,7 +286,14 @@ struct netif {
    * indicates the address is static and has no lifetimes. */
   u32_t ip6_addr_valid_life[LWIP_IPV6_NUM_ADDRESSES];
   u32_t ip6_addr_pref_life[LWIP_IPV6_NUM_ADDRESSES];
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t ip6_addr_valid_life_deadline_ms[LWIP_IPV6_NUM_ADDRESSES];
+  u32_t ip6_addr_pref_life_deadline_ms[LWIP_IPV6_NUM_ADDRESSES];
+#endif
 #endif /* LWIP_IPV6_ADDRESS_LIFETIMES */
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t ip6_addr_dad_deadline_ms[LWIP_IPV6_NUM_ADDRESSES];
+#endif
 
 #ifdef CONFIG_ENABLE_IPV6_ADDR_CALLBACK
   void (*ipv6_addr_cb)(struct netif *netif, u8_t ip_index);
@@ -365,6 +372,9 @@ struct netif {
 #if LWIP_IPV6_SEND_ROUTER_SOLICIT
   /** Number of Router Solicitation messages that remain to be sent. */
   u8_t rs_count;
+#if IPV6_TIMER_PRECISE_NEEDED
+  u32_t rs_deadline_ms;
+#endif
 #endif /* LWIP_IPV6_SEND_ROUTER_SOLICIT */
 #if MIB2_STATS
   /** link type (from "snmp_ifType" enum from snmp_mib2.h) */
@@ -533,11 +543,26 @@ void netif_ip6_addr_set(struct netif *netif, s8_t addr_idx, const ip6_addr_t *ad
 void netif_ip6_addr_set_parts(struct netif *netif, s8_t addr_idx, u32_t i0, u32_t i1, u32_t i2, u32_t i3);
 #define netif_ip6_addr_state(netif, i)  ((netif)->ip6_addr_state[i])
 void netif_ip6_addr_set_state(struct netif* netif, s8_t addr_idx, u8_t state);
+void netif_ip6_disable(struct netif *netif);
 s8_t netif_get_ip6_addr_match(struct netif *netif, const ip6_addr_t *ip6addr);
 void netif_create_ip6_linklocal_address(struct netif *netif, u8_t from_mac_48bit);
 err_t netif_add_ip6_address(struct netif *netif, const ip6_addr_t *ip6addr, s8_t *chosen_idx);
 #define netif_set_ip6_autoconfig_enabled(netif, action) do { if(netif) { (netif)->ip6_autoconfig_enabled = (action); }}while(0)
 #if LWIP_IPV6_ADDRESS_LIFETIMES
+#if IPV6_TIMER_PRECISE_NEEDED
+u32_t netif_ip6_addr_valid_life_precise(const struct netif *netif, s8_t addr_idx);
+void netif_ip6_addr_set_valid_life_precise(struct netif *netif, s8_t addr_idx, u32_t secs);
+u32_t netif_ip6_addr_pref_life_precise(const struct netif *netif, s8_t addr_idx);
+void netif_ip6_addr_set_pref_life_precise(struct netif *netif, s8_t addr_idx, u32_t secs);
+#define netif_ip6_addr_valid_life(netif, i) \
+    netif_ip6_addr_valid_life_precise((netif), (i))
+#define netif_ip6_addr_set_valid_life(netif, i, secs) \
+    netif_ip6_addr_set_valid_life_precise((netif), (i), (secs))
+#define netif_ip6_addr_pref_life(netif, i) \
+    netif_ip6_addr_pref_life_precise((netif), (i))
+#define netif_ip6_addr_set_pref_life(netif, i, secs) \
+    netif_ip6_addr_set_pref_life_precise((netif), (i), (secs))
+#else
 #define netif_ip6_addr_valid_life(netif, i)  \
     (((netif) != NULL) ? ((netif)->ip6_addr_valid_life[i]) : IP6_ADDR_LIFE_STATIC)
 #define netif_ip6_addr_set_valid_life(netif, i, secs) \
@@ -546,8 +571,17 @@ err_t netif_add_ip6_address(struct netif *netif, const ip6_addr_t *ip6addr, s8_t
     (((netif) != NULL) ? ((netif)->ip6_addr_pref_life[i]) : IP6_ADDR_LIFE_STATIC)
 #define netif_ip6_addr_set_pref_life(netif, i, secs) \
     do { if (netif != NULL) { (netif)->ip6_addr_pref_life[i] = (secs); }} while (0)
+#endif /* IPV6_TIMER_PRECISE_NEEDED */
+#if IPV6_TIMER_PRECISE_NEEDED
+/* The computed remaining lifetime may be zero at its deadline. Static is an
+ * address property, so test the stored value rather than the computed value. */
+#define netif_ip6_addr_isstatic(netif, i)  \
+    (((netif) != NULL) && \
+     ((netif)->ip6_addr_valid_life[i] == IP6_ADDR_LIFE_STATIC))
+#else
 #define netif_ip6_addr_isstatic(netif, i)  \
     (netif_ip6_addr_valid_life((netif), (i)) == IP6_ADDR_LIFE_STATIC)
+#endif
 #else /* !LWIP_IPV6_ADDRESS_LIFETIMES */
 #define netif_ip6_addr_isstatic(netif, i)  (1) /* all addresses are static */
 #endif /* !LWIP_IPV6_ADDRESS_LIFETIMES */

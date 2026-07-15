@@ -46,6 +46,36 @@ typedef enum {
     WIFI_APPIE_MAX,
 } wifi_appie_t;
 
+#if defined(CONFIG_WL80211_P2P)
+/*
+ * wifi_appie_t is consumed by existing ROM-facing paths and must stay fixed.
+ * Keep any new dynamic application/vendor IEs in a RAM-only namespace.
+ *
+ * The P2P-specific values intentionally follow the same frame ordering used by
+ * upstream wpa_supplicant enum wpa_vendor_elem_frame so the future glue can
+ * translate with minimal bookkeeping.
+ */
+typedef enum {
+    WIFI_APPIE_RM_ENABLED_CAPS = WIFI_APPIE_MAX,
+    WIFI_APPIE_P2P_PROBE_REQ,
+    WIFI_APPIE_P2P_PROBE_RESP,
+    WIFI_APPIE_P2P_PROBE_RESP_GO,
+    WIFI_APPIE_P2P_BEACON_GO,
+    WIFI_APPIE_P2P_PD_REQ,
+    WIFI_APPIE_P2P_PD_RESP,
+    WIFI_APPIE_P2P_GO_NEG_REQ,
+    WIFI_APPIE_P2P_GO_NEG_RESP,
+    WIFI_APPIE_P2P_GO_NEG_CONF,
+    WIFI_APPIE_P2P_INV_REQ,
+    WIFI_APPIE_P2P_INV_RESP,
+    WIFI_APPIE_P2P_ASSOC_REQ,
+    WIFI_APPIE_P2P_ASSOC_RESP,
+    WIFI_APPIE_ASSOC_REQ,
+    WIFI_APPIE_PROBE_REQ,
+    WIFI_APPIE_RAM_MAX,
+} wifi_appie_ram_t;
+#endif
+
 typedef enum wpa_alg {
     WIFI_WPA_ALG_NONE = 0,
     WIFI_WPA_ALG_WEP40 = 1,
@@ -178,8 +208,8 @@ typedef struct {
     uint8_t vif_idx;
     uint8_t mac[ETH_ALEN];
     struct wifi_ssid ssid;
-    uint8_t auth_mode;  // ref @ enum wifi_auth_mode_t
-    uint8_t pairwise_cipher;  // ref @ enum wifi_cipher_type_t
+    uint8_t auth_mode;       // ref @ enum wifi_auth_mode_t
+    uint8_t pairwise_cipher; // ref @ enum wifi_cipher_type_t
     char passphrase[64 + 1];
 } wifi_ap_parm_t;
 
@@ -224,6 +254,40 @@ struct wps_funcs {
     int (*wps_start_pending)(void);
 };
 
+#if defined(CONFIG_WL80211_P2P)
+/*
+ * Callbacks invoked by the wl80211 driver to notify the upper P2P stack of
+ * AP-side association events. The driver does not link against the supplicant,
+ * so it reaches the P2P stack only through this registered table. When P2P is
+ * not enabled, the table stays NULL and the calls are no-ops.
+ */
+struct p2p_funcs;
+struct p2p_funcs {
+    void (*notify_ap_assoc)(const uint8_t *addr, const uint8_t *ie, size_t len);
+    void (*notify_ap_disassoc)(const uint8_t *addr);
+};
+
+int bl_wifi_register_p2p_cb_internal(const struct p2p_funcs *cb);
+int bl_wifi_unregister_p2p_cb_internal(void);
+const struct p2p_funcs *bl_wifi_get_p2p_cb_internal(void);
+#endif /* CONFIG_WL80211_P2P */
+
+#if defined(CONFIG_BL_SUPPLICANT_WPS) || defined(CONFIG_WL80211_P2P)
+struct wps_ap_funcs {
+    bool (*active)(void);
+    bool (*assoc_req)(uint8_t vif_idx, uint8_t sta_idx, const uint8_t *peer_addr, const uint8_t *wps_ie,
+                      size_t wps_ie_len);
+    bool (*assoc_done)(uint8_t vif_idx, uint8_t sta_idx, const uint8_t *peer_addr);
+    bool (*rx_eapol)(const uint8_t *src_addr, uint8_t *buf, size_t len);
+    void (*probe_req_rx)(const uint8_t *addr, const uint8_t *wps_ie, size_t wps_ie_len);
+    void (*sta_removed)(const uint8_t *peer_addr);
+};
+
+int bl_wifi_register_wps_ap_cb_internal(const struct wps_ap_funcs *cb);
+int bl_wifi_unregister_wps_ap_cb_internal(void);
+const struct wps_ap_funcs *bl_wifi_get_wps_ap_cb_internal(void);
+#endif
+
 typedef enum wps_status {
     WPS_STATUS_DISABLE = 0,
     WPS_STATUS_SCANNING,
@@ -241,7 +305,19 @@ typedef void bl_wifi_timer_func_t(void *arg);
 void bl_wifi_timer_start(bl_wifi_timer_t *ptimer, uint32_t time_ms);
 void bl_wifi_timer_stop(bl_wifi_timer_t *ptimer);
 void bl_wifi_timer_setfn(bl_wifi_timer_t *ptimer, bl_wifi_timer_func_t *pfunction, void *parg);
+#if defined(CONFIG_WL80211_P2P)
+int bl_wifi_set_appie_ram_internal(uint8_t vif_idx, wifi_appie_ram_t type, const uint8_t *ie, uint16_t len, bool sta);
+int bl_wifi_unset_appie_ram_internal(uint8_t vif_idx, wifi_appie_ram_t type, bool sta);
+const uint8_t *bl_wifi_get_appie_ram_internal(bool sta, wifi_appie_ram_t type, uint16_t *len);
+#endif
 
+#if defined(CONFIG_WL80211_P2P)
+int bl_wifi_set_wps_cb_internal(const struct wps_funcs *wps_cb);
+const struct wps_funcs *bl_wifi_get_wps_cb_internal(void);
+wps_status_t bl_wifi_get_wps_status_internal(void);
+void bl_wifi_set_wps_status_internal(wps_status_t status);
+const uint8_t *wl80211_supplicant_get_appie_internal(bool sta, wifi_appie_t type, uint16_t *len);
+#endif
 
 extern const struct wpa_funcs *wpa_cbs;
 
@@ -263,8 +339,8 @@ int wl80211_supplicant_unregister_wpa_cb_internal(void);
 /**
  * @brief Set station key for supplicant
  */
-int wl80211_supplicant_set_sta_key_internal(uint8_t vif_idx, uint8_t sta_idx, wpa_alg_t alg, int key_idx, int set_tx, uint8_t *seq,
-                                 size_t seq_len, uint8_t *key, size_t key_len, bool pairwise);
+int wl80211_supplicant_set_sta_key_internal(uint8_t vif_idx, uint8_t sta_idx, wpa_alg_t alg, int key_idx, int set_tx,
+                                            uint8_t *seq, size_t seq_len, uint8_t *key, size_t key_len, bool pairwise);
 
 /**
  * @brief Input EAPOL frame to supplicant for processing
@@ -294,7 +370,8 @@ bool wl80211_supplicant_skip_supp_pmkcaching(void);
 /**
  * @brief Set IGTK (Integrity Group Temporal Key) for supplicant
  */
-int wl80211_supplicant_set_igtk_internal(uint8_t vif_idx, uint8_t sta_idx, uint16_t key_idx, const uint8_t *pn, const uint8_t *key);
+int wl80211_supplicant_set_igtk_internal(uint8_t vif_idx, uint8_t sta_idx, uint16_t key_idx, const uint8_t *pn,
+                                         const uint8_t *key);
 
 /**
  * @brief Get GTK (Group Temporal Key) from supplicant
@@ -330,7 +407,7 @@ int wl80211_supplicant_set_assoc_ie(uint8_t *ie, uint16_t ie_len);
  * @brief Get Association Response IEs received from AP
  */
 int wl80211_supplicant_get_assoc_ie(uint8_t **ie, uint16_t *ie_len);
-	
+
 /**
  * @brief Get hostapd private data pointer
  */
@@ -345,7 +422,7 @@ int wl80211_supplicant_ap_deauth_internal(uint8_t vif_idx, uint8_t sta_idx, uint
  * @brief Set AP mode key for supplicant
  */
 int wl80211_supplicant_set_ap_key_internal(uint8_t vif_idx, uint8_t sta_idx, wpa_alg_t alg, int key_idx, uint8_t *key,
-                                size_t key_len, bool pairwise);
+                                           size_t key_len, bool pairwise);
 
 /**
  * @brief Check if PTK initialization is done for given station
